@@ -15,19 +15,16 @@ export const authOptions: NextAuthOptions = {
   },
 
   callbacks: {
-    async signIn({ user, account }) {
-      // Всегда разрешаем вход
-      return true;
-    },
-
     async redirect({ url, baseUrl }) {
-      // После успешного входа всегда редиректим на /dashboard
+      // Если URL относительный, используем его
+      if (url.startsWith('/')) {
+        return `${baseUrl}${url}`;
+      }
+      // Если URL с того же домена, используем его
       if (url.startsWith(baseUrl)) {
-        if (url.includes('/auth/signin')) {
-          return `${baseUrl}/dashboard`;
-        }
         return url;
       }
+      // По умолчанию — dashboard
       return `${baseUrl}/dashboard`;
     },
 
