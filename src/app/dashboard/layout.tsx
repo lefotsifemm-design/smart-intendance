@@ -1,20 +1,37 @@
+'use client';
+
 import Link from 'next/link';
 import { Upload, Home, Settings, BarChart3 } from 'lucide-react';
 import UserMenu from '@/components/user-menu';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route';
-import { redirect } from 'next/navigation';
+import { useSession } from 'next-auth/react';
+import { useRouter } from 'next/navigation';
+import { useEffect } from 'react';
 
-export default async function DashboardLayout({
+export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  // Проверка авторизации
-  const session = await getServerSession(authOptions);
-  
+  const { data: session, status } = useSession();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (status === 'loading') return;
+    if (!session) {
+      router.push('/auth/signin');
+    }
+  }, [session, status, router]);
+
+  if (status === 'loading') {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full"></div>
+      </div>
+    );
+  }
+
   if (!session) {
-    redirect('/auth/signin');
+    return null;
   }
 
   return (
@@ -48,7 +65,6 @@ export default async function DashboardLayout({
                 </Link>
               </nav>
               
-              {/* User Menu */}
               <UserMenu />
             </div>
           </div>
