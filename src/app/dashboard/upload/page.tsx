@@ -8,6 +8,38 @@ import { supabase } from '@/lib/supabase';
 import { Upload, ArrowLeft, Plus, FileText, Check, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { CATEGORIES } from '@/lib/constants';
+import * as XLSX from 'xlsx';
+
+function fileToText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target?.result as string);
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsText(file);
+  });
+}
+
+function excelToCsv(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target?.result as ArrayBuffer);
+        const wb = XLSX.read(data, { type: 'array', dateNF: 'yyyy-mm-dd' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        resolve(XLSX.utils.sheet_to_csv(ws));
+      } catch {
+        reject(new Error('Failed to parse Excel file'));
+      }
+    };
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function isExcelFile(name: string) {
+  return name.endsWith('.xlsx') || name.endsWith('.xls');
+}
 
 interface ParsedSubscription {
   tempId: number;
@@ -58,8 +90,8 @@ export default function UploadPage() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.name.endsWith('.csv')) {
-      toast.error('Please upload a CSV file');
+    if (!file.name.endsWith('.csv') && !isExcelFile(file.name)) {
+      toast.error('Please upload a CSV or Excel file (.csv, .xlsx, .xls)');
       return;
     }
 
@@ -84,12 +116,9 @@ export default function UploadPage() {
     setIsUploading(true);
 
     try {
-      const csvContent = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (e) => resolve(e.target?.result as string);
-        reader.onerror = () => reject(new Error('Failed to read file'));
-        reader.readAsText(csvFile);
-      });
+      const csvContent = isExcelFile(csvFile.name)
+        ? await excelToCsv(csvFile)
+        : await fileToText(csvFile);
 
       if (uploadMode === 'statement') {
         toast.loading('AI is classifying all transactions... (10-20 sec)', { id: 'parsing' });
@@ -513,7 +542,7 @@ export default function UploadPage() {
               <div className="border-2 border-dashed border-gray-300 rounded-lg p-12 text-center hover:border-blue-500 transition">
                 <input
                   type="file"
-                  accept=".csv"
+                  accept=".csv,.xlsx,.xls"
                   onChange={handleFileSelect}
                   className="hidden"
                   id="csv-upload"
@@ -527,7 +556,7 @@ export default function UploadPage() {
                   <p className="text-gray-600">
                     {csvFile
                       ? 'Click to change file'
-                      : 'Click to browse or drag and drop your bank statement'}
+                      : 'CSV, Excel (.xlsx, .xls) — bank statement or export'}
                   </p>
                 </label>
               </div>

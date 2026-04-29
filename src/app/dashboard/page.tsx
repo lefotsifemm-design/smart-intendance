@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import { supabase } from '@/lib/supabase';
-import { TrendingUp, DollarSign, Calendar, Package, Edit2, Trash2, Plus, Search, Upload, Download } from 'lucide-react';
+import { TrendingUp, DollarSign, Calendar, Package, Edit2, Trash2, Plus, Search, Upload, Download, RotateCcw, ChevronDown, ChevronUp } from 'lucide-react';
 import { toast } from 'sonner';
 import SubscriptionModal from '@/components/subscription-modal';
 import { useCurrency } from '@/hooks/use-currency';
@@ -19,6 +19,7 @@ interface Subscription {
   source: string;
   last_charge: string | null;
   created_at: string;
+  deleted_at: string | null;
 }
 
 function getNextBillingDate(sub: Subscription): Date {
@@ -70,10 +71,14 @@ export default function DashboardPage() {
   const [search, setSearch] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
   const [filterFrequency, setFilterFrequency] = useState('');
+  const [trashedSubscriptions, setTrashedSubscriptions] = useState<Subscription[]>([]);
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [confirmingPermDeleteId, setConfirmingPermDeleteId] = useState<string | null>(null);
 
   useEffect(() => {
     if (session?.user?.id) {
       loadSubscriptions();
+      loadTrashed();
     }
   }, [session?.user?.id]);
 
@@ -84,6 +89,7 @@ export default function DashboardPage() {
         .from('subscriptions')
         .select('*')
         .eq('user_id', session.user.id)
+        .is('deleted_at', null)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -93,6 +99,22 @@ export default function DashboardPage() {
       toast.error('Failed to load subscriptions');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadTrashed = async () => {
+    if (!session?.user?.id) return;
+    try {
+      const { data, error } = await supabase
+        .from('subscriptions')
+        .select('*')
+        .eq('user_id', session.user.id)
+        .not('deleted_at', 'is', null)
+        .order('deleted_at', { ascending: false });
+      if (error) throw error;
+      setTrashedSubscriptions(data || []);
+    } catch {
+      toast.error('Failed to load trash');
     }
   };
 
@@ -200,14 +222,45 @@ export default function DashboardPage() {
 
   const deleteSubscription = async (id: string, name: string) => {
     try {
-      const { error } = await supabase.from('subscriptions').delete().eq('id', id);
+      const { error } = await supabase
+        .from('subscriptions')
+        .update({ deleted_at: new Date().toISOString() })
+        .eq('id', id);
       if (error) throw error;
-      toast.success(`${name} deleted`);
+      toast.success(`${name} moved to trash`);
       setConfirmingDeleteId(null);
       loadSubscriptions();
+      if (trashOpen) loadTrashed();
     } catch (error) {
       console.error('Error deleting subscription:', error);
       toast.error('Failed to delete subscription');
+    }
+  };
+
+  const restoreSubscription = async (id: string, name: string) => {
+    try {
+      const { error } = await supabase
+        .from('subscriptions')
+        .update({ deleted_at: null })
+        .eq('id', id);
+      if (error) throw error;
+      toast.success(`${name} restored`);
+      loadSubscriptions();
+      loadTrashed();
+    } catch {
+      toast.error('Failed to restore subscription');
+    }
+  };
+
+  const permanentlyDelete = async (id: string, name: string) => {
+    try {
+      const { error } = await supabase.from('subscriptions').delete().eq('id', id);
+      if (error) throw error;
+      toast.success(`${name} permanently deleted`);
+      setConfirmingPermDeleteId(null);
+      loadTrashed();
+    } catch {
+      toast.error('Failed to permanently delete');
     }
   };
 
@@ -533,6 +586,81 @@ export default function DashboardPage() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Recycle Bin */}
+      <div className="bg-white rounded-xl border border-gray-200">
+        <button
+          onClick={() => {
+            const next = !trashOpen;
+            setTrashOpen(next);
+            if (next) loadTrashed();
+          }}
+          className="w-full flex items-center justify-between p-5 text-left hover:bg-gray-50 transition rounded-xl"
+        >
+          <div className="flex items-center gap-3">
+            <Trash2 className="w-5 h-5 text-gray-400" />
+            <span className="font-semibold text-gray-700">Trash</span>
+            {trashedSubscriptions.length > 0 && (
+              <span className="text-xs font-semibold bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                {trashedSubscriptions.length}
+              </span>
+            )}
+          </div>
+          {trashOpen ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+        </button>
+
+        {trashOpen && (
+          <div className="border-t border-gray-100">
+            {trashedSubscriptions.length === 0 ? (
+              <p className="text-center text-sm text-gray-400 py-8">Trash is empty</p>
+            ) : (
+              <div className="divide-y divide-gray-100">
+                {trashedSubscriptions.map((sub) => (
+                  <div key={sub.id} className="flex items-center justify-between px-5 py-3 opacity-60 hover:opacity-100 transition">
+                    <div>
+                      <p className="font-medium text-gray-700 text-sm">{sub.name}</p>
+                      <p className="text-xs text-gray-400">{sub.category} · {sub.frequency} · {symbol}{sub.amount}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => restoreSubscription(sub.id, sub.name)}
+                        className="flex items-center gap-1 px-2 py-1 text-xs font-semibold text-blue-600 hover:bg-blue-50 rounded-md transition"
+                        title="Restore"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" /> Restore
+                      </button>
+                      {confirmingPermDeleteId === sub.id ? (
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => permanentlyDelete(sub.id, sub.name)}
+                            className="px-2 py-1 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 rounded-md transition"
+                          >
+                            Delete forever
+                          </button>
+                          <button
+                            onClick={() => setConfirmingPermDeleteId(null)}
+                            className="px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 rounded-md transition"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setConfirmingPermDeleteId(sub.id)}
+                          className="p-1.5 text-red-400 hover:bg-red-50 rounded-md transition"
+                          title="Delete permanently"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {modalMode && (

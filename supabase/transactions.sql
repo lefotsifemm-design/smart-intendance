@@ -16,6 +16,18 @@ create table if not exists transactions (
 -- RLS
 alter table transactions enable row level security;
 
-create policy "Users see own transactions"
-  on transactions for all
-  using (user_id = auth.uid()::text);
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where tablename = 'transactions'
+      and policyname = 'Users see own transactions'
+  ) then
+    execute $p$
+      create policy "Users see own transactions"
+        on transactions for all
+        using (user_id = auth.uid()::text)
+    $p$;
+  end if;
+end;
+$$;
