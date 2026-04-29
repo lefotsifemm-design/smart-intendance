@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { CATEGORIES } from '@/lib/constants';
 import { TrendingUp, DollarSign, Calendar, Package } from 'lucide-react';
 import { toast } from 'sonner';
+import { useCurrency } from '@/hooks/use-currency';
 import {
   PieChart,
   Pie,
@@ -41,6 +42,7 @@ function monthlyAmount(sub: Subscription): number {
 
 export default function AnalyticsPage() {
   const { data: session } = useSession();
+  const { symbol } = useCurrency();
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -138,7 +140,7 @@ export default function AnalyticsPage() {
             </div>
             <p className="text-sm text-gray-500">Monthly</p>
           </div>
-          <p className="text-2xl font-bold text-gray-900">${totalMonthly.toFixed(2)}</p>
+          <p className="text-2xl font-bold text-gray-900">{symbol}{totalMonthly.toFixed(2)}</p>
           <p className="text-xs text-gray-400 mt-1">/month</p>
         </div>
 
@@ -149,7 +151,7 @@ export default function AnalyticsPage() {
             </div>
             <p className="text-sm text-gray-500">Annual</p>
           </div>
-          <p className="text-2xl font-bold text-gray-900">${totalAnnual.toFixed(2)}</p>
+          <p className="text-2xl font-bold text-gray-900">{symbol}{totalAnnual.toFixed(2)}</p>
           <p className="text-xs text-gray-400 mt-1">/year</p>
         </div>
 
@@ -161,7 +163,7 @@ export default function AnalyticsPage() {
             <p className="text-sm text-gray-500">Avg / sub</p>
           </div>
           <p className="text-2xl font-bold text-gray-900">
-            ${(totalMonthly / subscriptions.length).toFixed(2)}
+            {symbol}{(totalMonthly / subscriptions.length).toFixed(2)}
           </p>
           <p className="text-xs text-gray-400 mt-1">/month</p>
         </div>
@@ -187,7 +189,7 @@ export default function AnalyticsPage() {
                     <Cell key={i} fill={entry.color} />
                   ))}
                 </Pie>
-                <Tooltip formatter={(v) => [`$${Number(v).toFixed(2)}/mo`, 'Spend']} />
+                <Tooltip formatter={(v) => [`${symbol}${Number(v).toFixed(2)}/mo`, 'Spend']} />
                 <Legend
                   formatter={(value) => (
                     <span className="text-xs text-gray-700">{value}</span>
@@ -208,7 +210,7 @@ export default function AnalyticsPage() {
               <CartesianGrid strokeDasharray="3 3" horizontal={false} />
               <XAxis
                 type="number"
-                tickFormatter={(v) => `$${v}`}
+                tickFormatter={(v) => `${symbol}${v}`}
                 tick={{ fontSize: 11 }}
               />
               <YAxis
@@ -217,7 +219,7 @@ export default function AnalyticsPage() {
                 width={90}
                 tick={{ fontSize: 11 }}
               />
-              <Tooltip formatter={(v) => [`$${Number(v).toFixed(2)}/mo`, 'Monthly cost']} />
+              <Tooltip formatter={(v) => [`${symbol}${Number(v).toFixed(2)}/mo`, 'Monthly cost']} />
               <Bar dataKey="monthly" fill="#3b82f6" radius={[0, 4, 4, 0]} />
             </BarChart>
           </ResponsiveContainer>
@@ -269,9 +271,9 @@ export default function AnalyticsPage() {
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className="font-semibold text-gray-900">${monthlyAmount(sub).toFixed(2)}/mo</p>
+                  <p className="font-semibold text-gray-900">{symbol}{monthlyAmount(sub).toFixed(2)}/mo</p>
                   {sub.frequency === 'annual' && (
-                    <p className="text-xs text-gray-400">${sub.amount}/yr</p>
+                    <p className="text-xs text-gray-400">{symbol}{sub.amount}/yr</p>
                   )}
                 </div>
               </div>

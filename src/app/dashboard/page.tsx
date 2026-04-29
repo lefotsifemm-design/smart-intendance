@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase';
 import { TrendingUp, DollarSign, Calendar, Package, Edit2, Trash2, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import SubscriptionModal from '@/components/subscription-modal';
+import { useCurrency } from '@/hooks/use-currency';
 
 interface Subscription {
   id: string;
@@ -15,6 +16,31 @@ interface Subscription {
   frequency: string;
   category: string;
   source: string;
+  last_charge: string | null;
+  created_at: string;
+}
+
+function getNextBillingDate(sub: Subscription): Date {
+  const base = sub.last_charge ? new Date(sub.last_charge) : new Date(sub.created_at);
+  const next = new Date(base);
+  const now = new Date();
+  if (sub.frequency === 'annual') {
+    next.setFullYear(next.getFullYear() + 1);
+    while (next <= now) next.setFullYear(next.getFullYear() + 1);
+  } else {
+    next.setMonth(next.getMonth() + 1);
+    while (next <= now) next.setMonth(next.getMonth() + 1);
+  }
+  return next;
+}
+
+function formatNextBilling(date: Date): string {
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function isDueSoon(date: Date): boolean {
+  const diffDays = (date.getTime() - Date.now()) / 86_400_000;
+  return diffDays >= 0 && diffDays <= 7;
 }
 
 type ModalMode = 'edit' | 'add' | null;
@@ -29,6 +55,8 @@ export default function DashboardPage() {
   const [modalMode, setModalMode] = useState<ModalMode>(null);
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [isSaving, setIsSaving] = useState(false);
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
+  const { symbol } = useCurrency();
 
   useEffect(() => {
     if (session?.user?.id) {
@@ -154,6 +182,7 @@ export default function DashboardPage() {
       const { error } = await supabase.from('subscriptions').delete().eq('id', id);
       if (error) throw error;
       toast.success(`${name} deleted`);
+      setConfirmingDeleteId(null);
       loadSubscriptions();
     } catch (error) {
       console.error('Error deleting subscription:', error);
@@ -208,7 +237,7 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-600">Monthly Spend</p>
-              <p className="text-3xl font-bold text-gray-900 mt-2">${totalMonthly.toFixed(2)}</p>
+              <p className="text-3xl font-bold text-gray-900 mt-2">{symbol}{totalMonthly.toFixed(2)}</p>
             </div>
             <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
               <Calendar className="w-6 h-6 text-green-600" />
@@ -220,7 +249,7 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-600">Annual Spend</p>
-              <p className="text-3xl font-bold text-gray-900 mt-2">${totalAnnual.toFixed(2)}</p>
+              <p className="text-3xl font-bold text-gray-900 mt-2">{symbol}{totalAnnual.toFixed(2)}</p>
             </div>
             <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
               <DollarSign className="w-6 h-6 text-purple-600" />
@@ -232,7 +261,7 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-600">Potential Savings</p>
-              <p className="text-3xl font-bold text-gray-900 mt-2">$0.00</p>
+              <p className="text-3xl font-bold text-gray-900 mt-2">{symbol}0.00</p>
             </div>
             <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center">
               <TrendingUp className="w-6 h-6 text-orange-600" />
@@ -298,8 +327,16 @@ export default function DashboardPage() {
                   </div>
                   <div className="flex items-center gap-4">
                     <div className="text-right">
-                      <p className="text-xl font-bold text-gray-900">${sub.amount}</p>
-                      <p className="text-sm text-gray-500">{sub.source}</p>
+                      <p className="text-xl font-bold text-gray-900">{symbol}{sub.amount}</p>
+                      {(() => {
+                        const next = getNextBillingDate(sub);
+                        const due = isDueSoon(next);
+                        return (
+                          <p className={`text-sm ${due ? 'text-red-500 font-medium' : 'text-gray-500'}`}>
+                            Next: {formatNextBilling(next)}
+                          </p>
+                        );
+                      })()}
                     </div>
                     <div className="flex items-center gap-2">
                       <button
@@ -309,13 +346,30 @@ export default function DashboardPage() {
                       >
                         <Edit2 className="w-5 h-5" />
                       </button>
-                      <button
-                        onClick={() => deleteSubscription(sub.id, sub.name)}
-                        className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition"
-                        title="Delete subscription"
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </button>
+                      {confirmingDeleteId === sub.id ? (
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => deleteSubscription(sub.id, sub.name)}
+                            className="px-2 py-1 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 rounded-md transition"
+                          >
+                            Delete
+                          </button>
+                          <button
+                            onClick={() => setConfirmingDeleteId(null)}
+                            className="px-2 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-100 rounded-md transition"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setConfirmingDeleteId(sub.id)}
+                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition"
+                          title="Delete subscription"
+                        >
+                          <Trash2 className="w-5 h-5" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
