@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { supabase } from '@/lib/supabase';
 import { CATEGORIES } from '@/lib/constants';
-import { TrendingUp, DollarSign, Calendar, Package } from 'lucide-react';
+import { TrendingUp, DollarSign, Calendar, Package, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useCurrency } from '@/hooks/use-currency';
 import {
@@ -45,6 +45,7 @@ export default function AnalyticsPage() {
   const { symbol } = useCurrency();
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
   useEffect(() => {
     if (session?.user?.id) {
@@ -89,6 +90,10 @@ export default function AnalyticsPage() {
 
   const monthlyCount = subscriptions.filter((s) => s.frequency === 'monthly').length;
   const annualCount = subscriptions.filter((s) => s.frequency === 'annual').length;
+
+  const drillSubscriptions = selectedCategory
+    ? subscriptions.filter((s) => s.category === selectedCategory)
+    : subscriptions;
 
   if (loading) {
     return (
@@ -172,7 +177,17 @@ export default function AnalyticsPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Pie chart — by category */}
         <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-lg font-bold text-gray-900 mb-6">Spend by Category</h2>
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-lg font-bold text-gray-900">Spend by Category</h2>
+            {selectedCategory && (
+              <button
+                onClick={() => setSelectedCategory(null)}
+                className="flex items-center gap-1 text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded-full hover:bg-blue-200 transition"
+              >
+                {selectedCategory} <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
           {categoryData.length > 0 ? (
             <ResponsiveContainer width="100%" height={280}>
               <PieChart>
@@ -184,9 +199,18 @@ export default function AnalyticsPage() {
                   outerRadius={100}
                   paddingAngle={3}
                   dataKey="value"
+                  style={{ cursor: 'pointer' }}
+                  onClick={(data: { name?: string }) => {
+                    if (!data.name) return;
+                    setSelectedCategory((prev) => (prev === data.name ? null : data.name!));
+                  }}
                 >
                   {categoryData.map((entry, i) => (
-                    <Cell key={i} fill={entry.color} />
+                    <Cell
+                      key={i}
+                      fill={entry.color}
+                      opacity={selectedCategory && selectedCategory !== entry.name ? 0.25 : 1}
+                    />
                   ))}
                 </Pie>
                 <Tooltip formatter={(v) => [`${symbol}${Number(v).toFixed(2)}/mo`, 'Spend']} />
@@ -255,11 +279,22 @@ export default function AnalyticsPage() {
 
       {/* Full ranked table */}
       <div className="bg-white rounded-xl border border-gray-200">
-        <div className="p-6 border-b border-gray-200">
-          <h2 className="text-lg font-bold text-gray-900">All Subscriptions (by cost)</h2>
+        <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+          <h2 className="text-lg font-bold text-gray-900">
+            {selectedCategory ? `${selectedCategory}` : 'All Subscriptions'}
+            <span className="ml-2 text-sm font-normal text-gray-400">by cost</span>
+          </h2>
+          {selectedCategory && (
+            <button
+              onClick={() => setSelectedCategory(null)}
+              className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
+            >
+              Show all <X className="w-3 h-3" />
+            </button>
+          )}
         </div>
         <div className="divide-y divide-gray-100">
-          {[...subscriptions]
+          {[...drillSubscriptions]
             .sort((a, b) => monthlyAmount(b) - monthlyAmount(a))
             .map((sub, i) => (
               <div key={sub.id} className="flex items-center justify-between px-6 py-3">

@@ -4,10 +4,11 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import { supabase } from '@/lib/supabase';
-import { TrendingUp, DollarSign, Calendar, Package, Edit2, Trash2, Plus } from 'lucide-react';
+import { TrendingUp, DollarSign, Calendar, Package, Edit2, Trash2, Plus, Search, Upload, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import SubscriptionModal from '@/components/subscription-modal';
 import { useCurrency } from '@/hooks/use-currency';
+import { CATEGORIES } from '@/lib/constants';
 
 interface Subscription {
   id: string;
@@ -43,6 +44,15 @@ function isDueSoon(date: Date): boolean {
   return diffDays >= 0 && diffDays <= 7;
 }
 
+function timeAgo(dateStr: string): string {
+  const days = Math.floor((Date.now() - new Date(dateStr).getTime()) / 86_400_000);
+  if (days === 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  return months === 1 ? '1mo ago' : `${months}mo ago`;
+}
+
 type ModalMode = 'edit' | 'add' | null;
 
 const EMPTY_FORM = { name: '', amount: '', frequency: 'monthly', category: '' };
@@ -57,6 +67,9 @@ export default function DashboardPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const { symbol } = useCurrency();
+  const [search, setSearch] = useState('');
+  const [filterCategory, setFilterCategory] = useState('');
+  const [filterFrequency, setFilterFrequency] = useState('');
 
   useEffect(() => {
     if (session?.user?.id) {
@@ -153,11 +166,19 @@ export default function DashboardPage() {
       return;
     }
 
+    const trimmedName = formData.name.trim();
+    const duplicate = subscriptions.find(
+      (s) => s.name.toLowerCase() === trimmedName.toLowerCase()
+    );
+    if (duplicate) {
+      toast.warning(`You already have "${duplicate.name}" — adding anyway`);
+    }
+
     setIsSaving(true);
     try {
       const { error } = await supabase.from('subscriptions').insert({
         user_id: session.user.id,
-        name: formData.name.trim(),
+        name: trimmedName,
         amount: parseFloat(formData.amount),
         frequency: formData.frequency,
         category: formData.category.trim() || null,
@@ -166,7 +187,7 @@ export default function DashboardPage() {
       });
 
       if (error) throw error;
-      toast.success(`${formData.name} added`);
+      toast.success(`${trimmedName} added`);
       closeModal();
       loadSubscriptions();
     } catch (error) {
@@ -190,11 +211,56 @@ export default function DashboardPage() {
     }
   };
 
+  const exportCSV = () => {
+    const headers = ['Name', 'Amount', 'Frequency', 'Category', 'Next Billing', 'Source'];
+    const rows = subscriptions.map((sub) => {
+      const next = formatNextBilling(getNextBillingDate(sub));
+      return [
+        `"${sub.name.replace(/"/g, '""')}"`,
+        sub.amount,
+        sub.frequency,
+        sub.category || '',
+        next,
+        sub.source,
+      ].join(',');
+    });
+    const csv = [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `subscriptions-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const filteredSubscriptions = subscriptions.filter((sub) => {
+    if (search && !sub.name.toLowerCase().includes(search.toLowerCase())) return false;
+    if (filterCategory && sub.category !== filterCategory) return false;
+    if (filterFrequency && sub.frequency !== filterFrequency) return false;
+    return true;
+  });
+
+  const hasActiveFilters = search !== '' || filterCategory !== '' || filterFrequency !== '';
+
   const totalMonthly = subscriptions.reduce((sum, sub) => {
     return sum + (sub.frequency === 'annual' ? sub.amount / 12 : sub.amount);
   }, 0);
 
   const totalAnnual = totalMonthly * 12;
+
+  const monthlyOf = (sub: Subscription) =>
+    sub.frequency === 'annual' ? sub.amount / 12 : sub.amount;
+
+  const duplicateCategories = CATEGORIES.flatMap((cat) => {
+    const inCat = subscriptions.filter((s) => s.category === cat);
+    if (inCat.length < 2) return [];
+    const catMonthly = inCat.map(monthlyOf);
+    const savings = catMonthly.reduce((a, b) => a + b, 0) - Math.min(...catMonthly);
+    return [{ category: cat, count: inCat.length, savings }];
+  });
+
+  const potentialSavings = duplicateCategories.reduce((sum, d) => sum + d.savings, 0);
 
   return (
     <div className="space-y-8">
@@ -217,6 +283,15 @@ export default function DashboardPage() {
           >
             Upload CSV
           </Link>
+          {subscriptions.length > 0 && (
+            <button
+              onClick={exportCSV}
+              className="inline-flex items-center gap-2 px-4 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition font-semibold"
+              title="Export to CSV"
+            >
+              <Download className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -259,11 +334,19 @@ export default function DashboardPage() {
 
         <div className="bg-white rounded-xl border border-gray-200 p-6">
           <div className="flex items-center justify-between">
-            <div>
+            <div className="min-w-0">
               <p className="text-sm text-gray-600">Potential Savings</p>
-              <p className="text-3xl font-bold text-gray-900 mt-2">{symbol}0.00</p>
+              <p className="text-3xl font-bold text-gray-900 mt-2">
+                {symbol}{potentialSavings.toFixed(2)}
+                {potentialSavings > 0 && <span className="text-sm font-normal text-gray-500">/mo</span>}
+              </p>
+              {duplicateCategories.length > 0 && (
+                <p className="text-xs text-orange-600 mt-1 truncate">
+                  {duplicateCategories.map((d) => `${d.count}× ${d.category}`).join(' · ')}
+                </p>
+              )}
             </div>
-            <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center">
+            <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center shrink-0">
               <TrendingUp className="w-6 h-6 text-orange-600" />
             </div>
           </div>
@@ -271,8 +354,49 @@ export default function DashboardPage() {
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200">
-        <div className="p-6 border-b border-gray-200">
-          <h2 className="text-xl font-bold text-gray-900">Recent Subscriptions</h2>
+        <div className="p-6 border-b border-gray-200 space-y-4">
+          <h2 className="text-xl font-bold text-gray-900">Subscriptions</h2>
+          {subscriptions.length > 0 && (
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search by name…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <select
+                value={filterCategory}
+                onChange={(e) => setFilterCategory(e.target.value)}
+                className="px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              >
+                <option value="">All categories</option>
+                {CATEGORIES.map((cat) => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
+              <select
+                value={filterFrequency}
+                onChange={(e) => setFilterFrequency(e.target.value)}
+                className="px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              >
+                <option value="">All billing</option>
+                <option value="monthly">Monthly</option>
+                <option value="annual">Annual</option>
+              </select>
+              {hasActiveFilters && (
+                <button
+                  onClick={() => { setSearch(''); setFilterCategory(''); setFilterFrequency(''); }}
+                  className="px-3 py-2 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition whitespace-nowrap"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          )}
         </div>
         <div className="p-6">
           {loading ? (
@@ -300,21 +424,52 @@ export default function DashboardPage() {
               ))}
             </div>
           ) : subscriptions.length === 0 ? (
-            <div className="text-center py-12">
-              <Package className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">No subscriptions yet</h3>
-              <p className="text-gray-600 mb-6">Add your first subscription to get started</p>
+            <div className="py-12">
+              <div className="text-center mb-10">
+                <Package className="w-14 h-14 text-gray-300 mx-auto mb-3" />
+                <h3 className="text-lg font-semibold text-gray-900 mb-1">No subscriptions yet</h3>
+                <p className="text-gray-500 text-sm">Choose how you want to get started:</p>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-lg mx-auto">
+                <button
+                  onClick={openAddModal}
+                  className="flex flex-col items-center gap-3 p-6 border-2 border-dashed border-blue-200 rounded-xl hover:border-blue-400 hover:bg-blue-50 transition text-center"
+                >
+                  <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
+                    <Plus className="w-6 h-6 text-blue-600" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-gray-900 text-sm">Quick Add</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Type in one subscription manually</p>
+                  </div>
+                </button>
+                <Link
+                  href="/dashboard/upload"
+                  className="flex flex-col items-center gap-3 p-6 border-2 border-dashed border-gray-200 rounded-xl hover:border-gray-400 hover:bg-gray-50 transition text-center"
+                >
+                  <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center">
+                    <Upload className="w-6 h-6 text-gray-600" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-gray-900 text-sm">Upload CSV</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Import from a bank statement — AI finds all subs</p>
+                  </div>
+                </Link>
+              </div>
+            </div>
+          ) : filteredSubscriptions.length === 0 ? (
+            <div className="text-center py-10">
+              <p className="text-gray-500 text-sm">No subscriptions match your filters.</p>
               <button
-                onClick={openAddModal}
-                className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                onClick={() => { setSearch(''); setFilterCategory(''); setFilterFrequency(''); }}
+                className="mt-2 text-sm text-blue-600 hover:underline"
               >
-                <Plus className="w-5 h-5" />
-                Add Subscription
+                Clear filters
               </button>
             </div>
           ) : (
             <div className="space-y-4">
-              {subscriptions.map((sub) => (
+              {filteredSubscriptions.map((sub) => (
                 <div
                   key={sub.id}
                   className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:border-gray-300 transition"
@@ -324,6 +479,7 @@ export default function DashboardPage() {
                     <p className="text-sm text-gray-600">
                       {sub.category} • {sub.frequency}
                     </p>
+                    <p className="text-xs text-gray-400">{timeAgo(sub.created_at)}</p>
                   </div>
                   <div className="flex items-center gap-4">
                     <div className="text-right">

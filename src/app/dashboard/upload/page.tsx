@@ -20,9 +20,20 @@ interface ParsedSubscription {
   confidence: number;
 }
 
+interface ParsedTransaction {
+  tempId: number;
+  type: 'income' | 'expense';
+  category: string;
+  amount: number;
+  date?: string;
+  description: string;
+  counterparty?: string;
+}
+
 export default function UploadPage() {
   const router = useRouter();
   const { data: session } = useSession();
+  const [uploadMode, setUploadMode] = useState<'subscriptions' | 'statement'>('subscriptions');
   const [activeTab, setActiveTab] = useState<'csv' | 'manual'>('manual');
   const [isUploading, setIsUploading] = useState(false);
   const [csvFile, setCsvFile] = useState<File | null>(null);
@@ -31,6 +42,8 @@ export default function UploadPage() {
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [parsedSubscriptions, setParsedSubscriptions] = useState<ParsedSubscription[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [parsedTransactions, setParsedTransactions] = useState<ParsedTransaction[]>([]);
+  const [selectedTransactionIds, setSelectedTransactionIds] = useState<Set<number>>(new Set());
 
   const [formData, setFormData] = useState({
     name: '',
@@ -78,47 +91,79 @@ export default function UploadPage() {
         reader.readAsText(csvFile);
       });
 
-      toast.loading('AI is analyzing your CSV... (5-10 sec)', { id: 'parsing' });
+      if (uploadMode === 'statement') {
+        toast.loading('AI is classifying all transactions... (10-20 sec)', { id: 'parsing' });
 
-      const response = await fetch('/api/parse-csv', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ csvContent }),
-      });
+        const response = await fetch('/api/parse-statement', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ csvContent }),
+        });
 
-      toast.dismiss('parsing');
+        toast.dismiss('parsing');
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.details || 'Failed to parse CSV');
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.details || 'Failed to parse statement');
+        }
+
+        const data = await response.json();
+
+        if (data.transactions.length === 0) {
+          toast.info('No transactions found in this CSV file');
+          return;
+        }
+
+        toast.success(`✅ Found ${data.count} transaction${data.count > 1 ? 's' : ''}!`, { duration: 3000 });
+
+        const txWithIds: ParsedTransaction[] = data.transactions.map(
+          (tx: Omit<ParsedTransaction, 'tempId'>, index: number) => ({ ...tx, tempId: index })
+        );
+        setParsedTransactions(txWithIds);
+        setSelectedTransactionIds(new Set(txWithIds.map((tx) => tx.tempId)));
+        setIsPreviewOpen(true);
+      } else {
+        toast.loading('AI is analyzing your CSV... (5-10 sec)', { id: 'parsing' });
+
+        const response = await fetch('/api/parse-csv', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ csvContent }),
+        });
+
+        toast.dismiss('parsing');
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.details || 'Failed to parse CSV');
+        }
+
+        const data = await response.json();
+
+        if (data.subscriptions.length === 0) {
+          toast.info('No subscriptions found in this CSV file');
+          return;
+        }
+
+        const avgConfidence = Math.round(
+          data.subscriptions.reduce(
+            (sum: number, sub: ParsedSubscription) => sum + (sub.confidence || 0),
+            0
+          ) / data.subscriptions.length
+        );
+
+        toast.success(
+          `✅ Found ${data.count} subscription${data.count > 1 ? 's' : ''}! Avg confidence: ${avgConfidence}%.`,
+          { duration: 3000 }
+        );
+
+        const subsWithIds: ParsedSubscription[] = data.subscriptions.map(
+          (sub: Omit<ParsedSubscription, 'tempId'>, index: number) => ({ ...sub, tempId: index })
+        );
+        setParsedSubscriptions(subsWithIds);
+        setSelectedIds(new Set(subsWithIds.map((sub) => sub.tempId)));
+        setIsPreviewOpen(true);
       }
-
-      const data = await response.json();
-
-      if (data.subscriptions.length === 0) {
-        toast.info('No subscriptions found in this CSV file');
-        return;
-      }
-
-      const avgConfidence = Math.round(
-        data.subscriptions.reduce(
-          (sum: number, sub: ParsedSubscription) => sum + (sub.confidence || 0),
-          0
-        ) / data.subscriptions.length
-      );
-
-      toast.success(
-        `✅ Found ${data.count} subscription${data.count > 1 ? 's' : ''}! ` +
-          `Avg confidence: ${avgConfidence}%.`,
-        { duration: 3000 }
-      );
-
-      const subsWithIds: ParsedSubscription[] = data.subscriptions.map(
-        (sub: Omit<ParsedSubscription, 'tempId'>, index: number) => ({ ...sub, tempId: index })
-      );
-      setParsedSubscriptions(subsWithIds);
-      setSelectedIds(new Set(subsWithIds.map((sub) => sub.tempId)));
-      setIsPreviewOpen(true);
     } catch (error) {
       console.error('Error uploading CSV:', error);
       toast.error(error instanceof Error ? error.message : 'Failed to upload CSV');
@@ -195,6 +240,43 @@ export default function UploadPage() {
     }
   };
 
+  const toggleTransaction = (id: number) => {
+    const next = new Set(selectedTransactionIds);
+    next.has(id) ? next.delete(id) : next.add(id);
+    setSelectedTransactionIds(next);
+  };
+
+  const saveSelectedTransactions = async () => {
+    const selected = parsedTransactions.filter((tx) => selectedTransactionIds.has(tx.tempId));
+    if (selected.length === 0) { toast.error('Select at least one transaction'); return; }
+    if (!session?.user?.id) { toast.error('Not authenticated'); return; }
+
+    setIsUploading(true);
+    try {
+      const { error } = await supabase.from('transactions').insert(
+        selected.map((tx) => ({
+          user_id: session.user!.id,
+          type: tx.type,
+          category: tx.category || null,
+          amount: tx.amount,
+          date: tx.date || null,
+          description: tx.description,
+          counterparty: tx.counterparty || null,
+          source: 'csv',
+        }))
+      );
+      if (error) throw error;
+      toast.success(`✅ Saved ${selected.length} transaction${selected.length > 1 ? 's' : ''}!`);
+      setIsPreviewOpen(false);
+      setTimeout(() => router.push('/dashboard/statements'), 1000);
+    } catch (error) {
+      console.error('Error saving transactions:', error);
+      toast.error('Failed to save transactions');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   // Confidence badge color
   const getConfidenceBadge = (confidence: number) => {
     if (confidence >= 90) return 'bg-green-100 text-green-700 border-green-200';
@@ -261,36 +343,61 @@ export default function UploadPage() {
   return (
     <div className="max-w-4xl mx-auto space-y-8">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <Link
-            href="/dashboard"
-            className="inline-flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-4 transition"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Dashboard
-          </Link>
-          <h1 className="text-3xl font-bold text-gray-900">Add Subscriptions</h1>
-          <p className="text-gray-600 mt-1">Upload a CSV file or add manually</p>
+      <div>
+        <Link
+          href="/dashboard"
+          className="inline-flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-4 transition"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to Dashboard
+        </Link>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">Upload</h1>
+            <p className="text-gray-600 mt-1">
+              {uploadMode === 'subscriptions' ? 'Add subscriptions manually or from a CSV' : 'Analyze a full bank statement for P&L'}
+            </p>
+          </div>
+          {/* Mode toggle */}
+          <div className="flex items-center gap-1 p-1 bg-gray-100 rounded-xl">
+            <button
+              onClick={() => { setUploadMode('subscriptions'); setActiveTab('manual'); }}
+              className={`px-4 py-2 text-sm font-semibold rounded-lg transition ${
+                uploadMode === 'subscriptions' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Subscriptions
+            </button>
+            <button
+              onClick={() => { setUploadMode('statement'); setActiveTab('csv'); }}
+              className={`px-4 py-2 text-sm font-semibold rounded-lg transition ${
+                uploadMode === 'statement' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Full Statement
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Tabs */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <div className="flex border-b border-gray-200">
-          <button
-            onClick={() => setActiveTab('manual')}
-            className={`flex-1 px-6 py-4 font-semibold transition ${
-              activeTab === 'manual'
-                ? 'bg-blue-50 text-blue-600 border-b-2 border-blue-600'
-                : 'text-gray-600 hover:bg-gray-50'
-            }`}
-          >
-            <div className="flex items-center justify-center gap-2">
-              <Plus className="w-5 h-5" />
-              Manual Entry
-            </div>
-          </button>
+          {uploadMode === 'subscriptions' && (
+            <button
+              onClick={() => setActiveTab('manual')}
+              className={`flex-1 px-6 py-4 font-semibold transition ${
+                activeTab === 'manual'
+                  ? 'bg-blue-50 text-blue-600 border-b-2 border-blue-600'
+                  : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <div className="flex items-center justify-center gap-2">
+                <Plus className="w-5 h-5" />
+                Manual Entry
+              </div>
+            </button>
+          )}
           <button
             onClick={() => setActiveTab('csv')}
             className={`flex-1 px-6 py-4 font-semibold transition ${
@@ -301,7 +408,7 @@ export default function UploadPage() {
           >
             <div className="flex items-center justify-center gap-2">
               <FileText className="w-5 h-5" />
-              Upload CSV
+              {uploadMode === 'statement' ? 'Upload Bank Statement' : 'Upload CSV'}
             </div>
           </button>
         </div>
@@ -473,29 +580,31 @@ export default function UploadPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-xl md:text-2xl font-bold text-gray-900">
-                    Review Subscriptions
+                    {uploadMode === 'statement' ? 'Review Transactions' : 'Review Subscriptions'}
                   </h2>
                   <p className="text-sm md:text-base text-gray-600 mt-1">
-                    {selectedIds.size} of {parsedSubscriptions.length} selected
+                    {uploadMode === 'statement'
+                      ? `${selectedTransactionIds.size} of ${parsedTransactions.length} selected`
+                      : `${selectedIds.size} of ${parsedSubscriptions.length} selected`}
                   </p>
                 </div>
-                <button
-                  onClick={() => setIsPreviewOpen(false)}
-                  className="text-gray-400 hover:text-gray-600 transition"
-                  disabled={isUploading}
-                >
+                <button onClick={() => setIsPreviewOpen(false)} className="text-gray-400 hover:text-gray-600 transition" disabled={isUploading}>
                   <X className="w-5 h-5 md:w-6 md:h-6" />
                 </button>
               </div>
               <div className="flex gap-2 mt-4">
                 <button
-                  onClick={selectAll}
+                  onClick={() => uploadMode === 'statement'
+                    ? setSelectedTransactionIds(new Set(parsedTransactions.map((t) => t.tempId)))
+                    : selectAll()}
                   className="px-3 py-1.5 text-xs md:text-sm bg-gray-100 hover:bg-gray-200 rounded transition"
                 >
                   Select All
                 </button>
                 <button
-                  onClick={deselectAll}
+                  onClick={() => uploadMode === 'statement'
+                    ? setSelectedTransactionIds(new Set())
+                    : deselectAll()}
                   className="px-3 py-1.5 text-xs md:text-sm bg-gray-100 hover:bg-gray-200 rounded transition"
                 >
                   Deselect All
@@ -503,87 +612,106 @@ export default function UploadPage() {
               </div>
             </div>
 
-            {/* Subscriptions Table */}
+            {/* Content */}
             <div className="flex-1 overflow-y-auto p-4 md:p-6">
               <div className="space-y-3">
-                {parsedSubscriptions.map((sub) => (
-                  <div
-                    key={sub.tempId}
-                    className={`flex flex-col md:flex-row items-start md:items-center gap-3 md:gap-4 p-3 md:p-4 border-2 rounded-lg transition cursor-pointer ${
-                      selectedIds.has(sub.tempId)
-                        ? 'border-blue-500 bg-blue-50'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}
-                    onClick={() => toggleSelection(sub.tempId)}
-                  >
-                    {/* Checkbox */}
-                    <div className="flex-shrink-0">
+                {uploadMode === 'statement' ? (
+                  parsedTransactions.map((tx) => {
+                    const selected = selectedTransactionIds.has(tx.tempId);
+                    return (
                       <div
-                        className={`w-5 h-5 rounded border-2 flex items-center justify-center ${
-                          selectedIds.has(sub.tempId)
-                            ? 'bg-blue-600 border-blue-600'
-                            : 'border-gray-300'
+                        key={tx.tempId}
+                        onClick={() => toggleTransaction(tx.tempId)}
+                        className={`flex items-center gap-3 md:gap-4 p-3 md:p-4 border-2 rounded-lg transition cursor-pointer ${
+                          selected ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
                         }`}
                       >
-                        {selectedIds.has(sub.tempId) && (
-                          <Check className="w-3 h-3 text-white" />
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Subscription Info */}
-                    <div className="flex-1 min-w-0">
-                      <div className="font-semibold text-gray-900 truncate">{sub.name}</div>
-                      <div className="text-xs md:text-sm text-gray-600 truncate">
-                        {sub.category} • {sub.frequency}
-                        {sub.merchant && ` • ${sub.merchant}`}
-                      </div>
-                    </div>
-
-                    {/* Amount & Confidence */}
-                    <div className="flex items-center gap-2 md:gap-4 w-full md:w-auto justify-between md:justify-end">
-                      {/* Amount */}
-                      <div className="text-right">
-                        <div className="text-lg md:text-xl font-bold text-gray-900">
-                          ${sub.amount}
+                        <div className="flex-shrink-0">
+                          <div className={`w-5 h-5 rounded border-2 flex items-center justify-center ${selected ? 'bg-blue-600 border-blue-600' : 'border-gray-300'}`}>
+                            {selected && <Check className="w-3 h-3 text-white" />}
+                          </div>
                         </div>
-                        <div className="text-xs md:text-sm text-gray-500">
-                          {sub.frequency === 'monthly' ? '/month' : '/year'}
+                        <div className="flex-1 min-w-0">
+                          <div className="font-semibold text-gray-900 truncate">{tx.description || tx.counterparty || '—'}</div>
+                          <div className="text-xs md:text-sm text-gray-600 truncate">
+                            {tx.category}{tx.date ? ` · ${tx.date}` : ''}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3 shrink-0">
+                          <span className={`px-2 py-1 rounded-full text-xs font-semibold border ${
+                            tx.type === 'income'
+                              ? 'bg-green-100 text-green-700 border-green-200'
+                              : 'bg-red-100 text-red-700 border-red-200'
+                          }`}>
+                            {tx.type}
+                          </span>
+                          <div className="text-right">
+                            <div className={`text-lg font-bold ${tx.type === 'income' ? 'text-green-700' : 'text-red-700'}`}>
+                              ${tx.amount.toFixed(2)}
+                            </div>
+                          </div>
                         </div>
                       </div>
-
-                      {/* Confidence Badge */}
-                      <div
-                        className={`px-2 md:px-3 py-1 rounded-full text-xs md:text-sm font-semibold border ${getConfidenceBadge(
-                          sub.confidence
-                        )}`}
-                      >
-                        {sub.confidence}%
+                    );
+                  })
+                ) : (
+                  parsedSubscriptions.map((sub) => (
+                    <div
+                      key={sub.tempId}
+                      className={`flex flex-col md:flex-row items-start md:items-center gap-3 md:gap-4 p-3 md:p-4 border-2 rounded-lg transition cursor-pointer ${
+                        selectedIds.has(sub.tempId) ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
+                      }`}
+                      onClick={() => toggleSelection(sub.tempId)}
+                    >
+                      <div className="flex-shrink-0">
+                        <div className={`w-5 h-5 rounded border-2 flex items-center justify-center ${selectedIds.has(sub.tempId) ? 'bg-blue-600 border-blue-600' : 'border-gray-300'}`}>
+                          {selectedIds.has(sub.tempId) && <Check className="w-3 h-3 text-white" />}
+                        </div>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-gray-900 truncate">{sub.name}</div>
+                        <div className="text-xs md:text-sm text-gray-600 truncate">
+                          {sub.category} • {sub.frequency}
+                          {sub.merchant && ` • ${sub.merchant}`}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 md:gap-4 w-full md:w-auto justify-between md:justify-end">
+                        <div className="text-right">
+                          <div className="text-lg md:text-xl font-bold text-gray-900">${sub.amount}</div>
+                          <div className="text-xs md:text-sm text-gray-500">{sub.frequency === 'monthly' ? '/month' : '/year'}</div>
+                        </div>
+                        <div className={`px-2 md:px-3 py-1 rounded-full text-xs md:text-sm font-semibold border ${getConfidenceBadge(sub.confidence)}`}>
+                          {sub.confidence}%
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </div>
 
             {/* Footer */}
             <div className="p-4 md:p-6 border-t border-gray-200 flex flex-col md:flex-row gap-3">
-              <button
-                onClick={() => setIsPreviewOpen(false)}
-                className="w-full md:flex-1 px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition font-semibold"
-                disabled={isUploading}
-              >
+              <button onClick={() => setIsPreviewOpen(false)} className="w-full md:flex-1 px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition font-semibold" disabled={isUploading}>
                 Cancel
               </button>
-              <button
-                onClick={saveSelectedSubscriptions}
-                className="w-full md:flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={isUploading || selectedIds.size === 0}
-              >
-                {isUploading
-                  ? 'Saving...'
-                  : `Save ${selectedIds.size} Subscription${selectedIds.size !== 1 ? 's' : ''}`}
-              </button>
+              {uploadMode === 'statement' ? (
+                <button
+                  onClick={saveSelectedTransactions}
+                  className="w-full md:flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={isUploading || selectedTransactionIds.size === 0}
+                >
+                  {isUploading ? 'Saving...' : `Save ${selectedTransactionIds.size} Transaction${selectedTransactionIds.size !== 1 ? 's' : ''}`}
+                </button>
+              ) : (
+                <button
+                  onClick={saveSelectedSubscriptions}
+                  className="w-full md:flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={isUploading || selectedIds.size === 0}
+                >
+                  {isUploading ? 'Saving...' : `Save ${selectedIds.size} Subscription${selectedIds.size !== 1 ? 's' : ''}`}
+                </button>
+              )}
             </div>
           </div>
         </div>
