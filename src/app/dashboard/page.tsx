@@ -2,10 +2,11 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useSession } from 'next-auth/react';  // ← Добавь это!
+import { useSession } from 'next-auth/react';
 import { supabase } from '@/lib/supabase';
 import { TrendingUp, DollarSign, Calendar, Package, Edit2, Trash2, Plus } from 'lucide-react';
 import { toast } from 'sonner';
+import SubscriptionModal from '@/components/subscription-modal';
 
 interface Subscription {
   id: string;
@@ -16,57 +17,32 @@ interface Subscription {
   source: string;
 }
 
-// Популярные категории подписок
-const CATEGORIES = [
-  'Entertainment',
-  'Software',
-  'Music',
-  'Cloud Storage',
-  'Productivity',
-  'Design',
-  'Education',
-  'News',
-  'Fitness',
-  'Food & Delivery',
-  'Transportation',
-  'Gaming',
-  'Other',
-];
+type ModalMode = 'edit' | 'add' | null;
+
+const EMPTY_FORM = { name: '', amount: '', frequency: 'monthly', category: '' };
 
 export default function DashboardPage() {
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [loading, setLoading] = useState(true);
   const { data: session } = useSession();
-  const [editingSubscription, setEditingSubscription] = useState<Subscription | null>(null);
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [modalMode, setModalMode] = useState<ModalMode>(null);
+  const [formData, setFormData] = useState(EMPTY_FORM);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Form state для редактирования
-  const [editFormData, setEditFormData] = useState({
-    name: '',
-    amount: '',
-    frequency: 'monthly',
-    category: '',
-  });
-
-  // Form state для добавления
-  const [addFormData, setAddFormData] = useState({
-    name: '',
-    amount: '',
-    frequency: 'monthly',
-    category: '',
-  });
-
   useEffect(() => {
-    loadSubscriptions();
-  }, []);
+    if (session?.user?.id) {
+      loadSubscriptions();
+    }
+  }, [session?.user?.id]);
 
   const loadSubscriptions = async () => {
+    if (!session?.user?.id) return;
     try {
       const { data, error } = await supabase
         .from('subscriptions')
         .select('*')
+        .eq('user_id', session.user.id)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -79,58 +55,60 @@ export default function DashboardPage() {
     }
   };
 
-  // ========== EDIT FUNCTIONS ==========
-
   const openEditModal = (subscription: Subscription) => {
-    setEditingSubscription(subscription);
-    setEditFormData({
+    setEditingId(subscription.id);
+    setFormData({
       name: subscription.name,
       amount: subscription.amount.toString(),
       frequency: subscription.frequency,
       category: subscription.category || '',
     });
-    setIsEditModalOpen(true);
+    setModalMode('edit');
   };
 
-  const closeEditModal = () => {
-    setIsEditModalOpen(false);
-    setEditingSubscription(null);
-    setEditFormData({ name: '', amount: '', frequency: 'monthly', category: '' });
+  const openAddModal = () => {
+    setFormData(EMPTY_FORM);
+    setModalMode('add');
+  };
+
+  const closeModal = () => {
+    setModalMode(null);
+    setEditingId(null);
+    setFormData(EMPTY_FORM);
+  };
+
+  const validateForm = () => {
+    if (!formData.name.trim()) {
+      toast.error('Name is required');
+      return false;
+    }
+    const amount = parseFloat(formData.amount);
+    if (isNaN(amount) || amount <= 0) {
+      toast.error('Amount must be a positive number');
+      return false;
+    }
+    return true;
   };
 
   const saveSubscription = async () => {
-    if (!editingSubscription) return;
-
-    // Валидация
-    if (!editFormData.name.trim()) {
-      toast.error('Name is required');
-      return;
-    }
-
-    const amount = parseFloat(editFormData.amount);
-    if (isNaN(amount) || amount <= 0) {
-      toast.error('Amount must be a positive number');
-      return;
-    }
+    if (!editingId || !validateForm()) return;
 
     setIsSaving(true);
-
     try {
       const { error } = await supabase
         .from('subscriptions')
         .update({
-          name: editFormData.name.trim(),
-          amount: amount,
-          frequency: editFormData.frequency,
-          category: editFormData.category.trim() || null,
+          name: formData.name.trim(),
+          amount: parseFloat(formData.amount),
+          frequency: formData.frequency,
+          category: formData.category.trim() || null,
           updated_at: new Date().toISOString(),
         })
-        .eq('id', editingSubscription.id);
+        .eq('id', editingId);
 
       if (error) throw error;
-
-      toast.success('Subscription updated successfully! ✅');
-      closeEditModal();
+      toast.success('Subscription updated');
+      closeModal();
       loadSubscriptions();
     } catch (error) {
       console.error('Error updating subscription:', error);
@@ -140,72 +118,42 @@ export default function DashboardPage() {
     }
   };
 
-  // ========== ADD FUNCTIONS ==========
+  const addSubscription = async () => {
+    if (!validateForm()) return;
+    if (!session?.user?.id) {
+      toast.error('Not authenticated');
+      return;
+    }
 
-  const openAddModal = () => {
-    setAddFormData({ name: '', amount: '', frequency: 'monthly', category: '' });
-    setIsAddModalOpen(true);
+    setIsSaving(true);
+    try {
+      const { error } = await supabase.from('subscriptions').insert({
+        user_id: session.user.id,
+        name: formData.name.trim(),
+        amount: parseFloat(formData.amount),
+        frequency: formData.frequency,
+        category: formData.category.trim() || null,
+        source: 'manual',
+        confidence: 100,
+      });
+
+      if (error) throw error;
+      toast.success(`${formData.name} added`);
+      closeModal();
+      loadSubscriptions();
+    } catch (error) {
+      console.error('Error adding subscription:', error);
+      toast.error('Failed to add subscription');
+    } finally {
+      setIsSaving(false);
+    }
   };
-
-  const closeAddModal = () => {
-    setIsAddModalOpen(false);
-    setAddFormData({ name: '', amount: '', frequency: 'monthly', category: '' });
-  };
-
- const addSubscription = async () => {
-  // Валидация
-  if (!addFormData.name.trim()) {
-    toast.error('Name is required');
-    return;
-  }
-
-  const amount = parseFloat(addFormData.amount);
-  if (isNaN(amount) || amount <= 0) {
-    toast.error('Amount must be a positive number');
-    return;
-  }
-
-  // Проверка сессии NextAuth
-  if (!session?.user?.email) {
-    toast.error('Not authenticated');
-    return;
-  }
-
-  setIsSaving(true);
-
-  try {
-    const { error } = await supabase.from('subscriptions').insert({
-      user_id: session.user.email,  // Используем email из NextAuth
-      name: addFormData.name.trim(),
-      amount: amount,
-      frequency: addFormData.frequency,
-      category: addFormData.category.trim() || null,
-      source: 'manual',
-      confidence: 100,
-    });
-
-    if (error) throw error;
-
-    toast.success(`${addFormData.name} added successfully! ✅`);
-    closeAddModal();
-    loadSubscriptions();
-  } catch (error) {
-    console.error('Error adding subscription:', error);
-    toast.error('Failed to add subscription');
-  } finally {
-    setIsSaving(false);
-  }
-};
-
-  // ========== DELETE FUNCTION ==========
 
   const deleteSubscription = async (id: string, name: string) => {
     try {
       const { error } = await supabase.from('subscriptions').delete().eq('id', id);
-
       if (error) throw error;
-
-      toast.success(`${name} deleted successfully`);
+      toast.success(`${name} deleted`);
       loadSubscriptions();
     } catch (error) {
       console.error('Error deleting subscription:', error);
@@ -213,18 +161,14 @@ export default function DashboardPage() {
     }
   };
 
-  // ========== CALCULATIONS ==========
-
   const totalMonthly = subscriptions.reduce((sum, sub) => {
-    const monthlyAmount = sub.frequency === 'annual' ? sub.amount / 12 : sub.amount;
-    return sum + monthlyAmount;
+    return sum + (sub.frequency === 'annual' ? sub.amount / 12 : sub.amount);
   }, 0);
 
   const totalAnnual = totalMonthly * 12;
 
   return (
     <div className="space-y-8">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
@@ -247,7 +191,6 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <div className="bg-white rounded-xl border border-gray-200 p-6">
           <div className="flex items-center justify-between">
@@ -298,14 +241,12 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Subscriptions List */}
       <div className="bg-white rounded-xl border border-gray-200">
         <div className="p-6 border-b border-gray-200">
           <h2 className="text-xl font-bold text-gray-900">Recent Subscriptions</h2>
         </div>
         <div className="p-6">
           {loading ? (
-            // Skeleton Loading State
             <div className="space-y-4">
               {[1, 2, 3].map((i) => (
                 <div
@@ -384,208 +325,16 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* ========== EDIT MODAL ========== */}
-      {isEditModalOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-200">
-              <div className="flex items-center justify-between">
-                <h2 className="text-2xl font-bold text-gray-900">Edit Subscription</h2>
-                <button
-                  onClick={closeEditModal}
-                  className="text-gray-400 hover:text-gray-600 transition"
-                  disabled={isSaving}
-                >
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-
-            <div className="p-6 space-y-5">
-              <div>
-                <label className="block text-sm font-semibold text-gray-900 mb-2">
-                  Name <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={editFormData.name}
-                  onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Netflix, Spotify, etc."
-                  disabled={isSaving}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-900 mb-2">
-                  Amount ($) <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={editFormData.amount}
-                  onChange={(e) => setEditFormData({ ...editFormData, amount: e.target.value })}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="12.99"
-                  disabled={isSaving}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-900 mb-2">
-                  Frequency <span className="text-red-500">*</span>
-                </label>
-                <select
-                  value={editFormData.frequency}
-                  onChange={(e) => setEditFormData({ ...editFormData, frequency: e.target.value })}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  disabled={isSaving}
-                >
-                  <option value="monthly">Monthly</option>
-                  <option value="annual">Annual</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-900 mb-2">Category</label>
-                <select
-                  value={editFormData.category}
-                  onChange={(e) => setEditFormData({ ...editFormData, category: e.target.value })}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  disabled={isSaving}
-                >
-                  <option value="">Select category...</option>
-                  {CATEGORIES.map((cat) => (
-                    <option key={cat} value={cat}>
-                      {cat}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="p-6 border-t border-gray-200 flex gap-3">
-              <button
-                onClick={closeEditModal}
-                className="flex-1 px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition font-semibold"
-                disabled={isSaving}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={saveSubscription}
-                className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={isSaving}
-              >
-                {isSaving ? 'Saving...' : 'Save Changes'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ========== ADD MODAL ========== */}
-      {isAddModalOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-200">
-              <div className="flex items-center justify-between">
-                <h2 className="text-2xl font-bold text-gray-900">Add Subscription</h2>
-                <button
-                  onClick={closeAddModal}
-                  className="text-gray-400 hover:text-gray-600 transition"
-                  disabled={isSaving}
-                >
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-
-            <div className="p-6 space-y-5">
-              <div>
-                <label className="block text-sm font-semibold text-gray-900 mb-2">
-                  Name <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={addFormData.name}
-                  onChange={(e) => setAddFormData({ ...addFormData, name: e.target.value })}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Netflix, Spotify, etc."
-                  disabled={isSaving}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-900 mb-2">
-                  Amount ($) <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={addFormData.amount}
-                  onChange={(e) => setAddFormData({ ...addFormData, amount: e.target.value })}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="12.99"
-                  disabled={isSaving}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-900 mb-2">
-                  Frequency <span className="text-red-500">*</span>
-                </label>
-                <select
-                  value={addFormData.frequency}
-                  onChange={(e) => setAddFormData({ ...addFormData, frequency: e.target.value })}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  disabled={isSaving}
-                >
-                  <option value="monthly">Monthly</option>
-                  <option value="annual">Annual</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-900 mb-2">Category</label>
-                <select
-                  value={addFormData.category}
-                  onChange={(e) => setAddFormData({ ...addFormData, category: e.target.value })}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  disabled={isSaving}
-                >
-                  <option value="">Select category...</option>
-                  {CATEGORIES.map((cat) => (
-                    <option key={cat} value={cat}>
-                      {cat}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="p-6 border-t border-gray-200 flex gap-3">
-              <button
-                onClick={closeAddModal}
-                className="flex-1 px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition font-semibold"
-                disabled={isSaving}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={addSubscription}
-                className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={isSaving}
-              >
-                {isSaving ? 'Adding...' : 'Add Subscription'}
-              </button>
-            </div>
-          </div>
-        </div>
+      {modalMode && (
+        <SubscriptionModal
+          title={modalMode === 'edit' ? 'Edit Subscription' : 'Add Subscription'}
+          formData={formData}
+          onChange={setFormData}
+          onConfirm={modalMode === 'edit' ? saveSubscription : addSubscription}
+          onClose={closeModal}
+          isSaving={isSaving}
+          confirmLabel={modalMode === 'edit' ? 'Save Changes' : 'Add Subscription'}
+        />
       )}
     </div>
   );

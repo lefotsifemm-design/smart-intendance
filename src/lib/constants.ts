@@ -1,0 +1,15 @@
+export const CATEGORIES = [
+  'Entertainment',
+  'Software',
+  'Music',
+  'Cloud Storage',
+  'Productivity',
+  'Design',
+  'Education',
+  'News',
+  'Fitness',
+  'Food & Delivery',
+  'Transportation',
+  'Gaming',
+  'Other',
+] as const;

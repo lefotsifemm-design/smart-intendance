@@ -7,22 +7,18 @@ import { useSession } from 'next-auth/react';
 import { supabase } from '@/lib/supabase';
 import { Upload, ArrowLeft, Plus, FileText, Check, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { CATEGORIES } from '@/lib/constants';
 
-const CATEGORIES = [
-  'Entertainment',
-  'Software',
-  'Music',
-  'Cloud Storage',
-  'Productivity',
-  'Design',
-  'Education',
-  'News',
-  'Fitness',
-  'Food & Delivery',
-  'Transportation',
-  'Gaming',
-  'Other',
-];
+interface ParsedSubscription {
+  tempId: number;
+  name: string;
+  amount: number;
+  frequency: string;
+  category: string;
+  merchant?: string;
+  last_charge?: string;
+  confidence: number;
+}
 
 export default function UploadPage() {
   const router = useRouter();
@@ -33,7 +29,7 @@ export default function UploadPage() {
   const [csvPreview, setCsvPreview] = useState<string>('');
 
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
-  const [parsedSubscriptions, setParsedSubscriptions] = useState<any[]>([]);
+  const [parsedSubscriptions, setParsedSubscriptions] = useState<ParsedSubscription[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
   const [formData, setFormData] = useState({
@@ -106,7 +102,7 @@ export default function UploadPage() {
 
       const avgConfidence = Math.round(
         data.subscriptions.reduce(
-          (sum: number, sub: any) => sum + (sub.confidence || 0),
+          (sum: number, sub: ParsedSubscription) => sum + (sub.confidence || 0),
           0
         ) / data.subscriptions.length
       );
@@ -117,16 +113,15 @@ export default function UploadPage() {
         { duration: 3000 }
       );
 
-      const subsWithIds = data.subscriptions.map((sub: any, index: number) => ({
-        ...sub,
-        tempId: index,
-      }));
+      const subsWithIds: ParsedSubscription[] = data.subscriptions.map(
+        (sub: Omit<ParsedSubscription, 'tempId'>, index: number) => ({ ...sub, tempId: index })
+      );
       setParsedSubscriptions(subsWithIds);
-      setSelectedIds(new Set(subsWithIds.map((sub: any) => sub.tempId)));
+      setSelectedIds(new Set(subsWithIds.map((sub) => sub.tempId)));
       setIsPreviewOpen(true);
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error uploading CSV:', error);
-      toast.error(error.message || 'Failed to upload CSV');
+      toast.error(error instanceof Error ? error.message : 'Failed to upload CSV');
     } finally {
       setIsUploading(false);
     }
@@ -160,7 +155,7 @@ export default function UploadPage() {
       return;
     }
 
-    if (!session?.user?.email) {
+    if (!session?.user?.id) {
       toast.error('Not authenticated');
       return;
     }
@@ -168,8 +163,8 @@ export default function UploadPage() {
     setIsUploading(true);
 
     try {
-      const subscriptionsToInsert = selected.map((sub: any) => ({
-        user_id: session.user!.email,
+      const subscriptionsToInsert = selected.map((sub) => ({
+        user_id: session.user!.id,
         name: sub.name,
         amount: sub.amount,
         frequency: sub.frequency,
@@ -223,7 +218,7 @@ export default function UploadPage() {
       return;
     }
 
-    if (!session?.user?.email) {
+    if (!session?.user?.id) {
       toast.error('Not authenticated');
       return;
     }
@@ -232,7 +227,7 @@ export default function UploadPage() {
 
     try {
       const { error } = await supabase.from('subscriptions').insert({
-        user_id: session.user.email,
+        user_id: session.user.id,
         name: formData.name.trim(),
         amount: amount,
         frequency: formData.frequency,
