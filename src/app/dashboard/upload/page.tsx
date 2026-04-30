@@ -346,25 +346,22 @@ export default function UploadPage() {
 
     setIsUploading(true);
     try {
-      const { error } = await supabase.from('transactions').insert(
-        selected.map((tx) => ({
-          user_id: session.user!.id,
-          type: tx.type,
-          category: tx.category || null,
-          amount: tx.amount,
-          date: tx.date || null,
-          description: tx.description,
-          counterparty: tx.counterparty || null,
-          source: 'csv',
-        }))
-      );
-      if (error) throw error;
-      toast.success(`✅ Saved ${selected.length} transaction${selected.length > 1 ? 's' : ''}!`);
+      const response = await fetch('/api/save-transactions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transactions: selected }),
+      });
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || 'Failed to save');
+      }
+      const data = await response.json();
+      toast.success(`✅ Saved ${data.saved} transaction${data.saved !== 1 ? 's' : ''}!`);
       setIsPreviewOpen(false);
       setTimeout(() => router.push('/dashboard/statements'), 1000);
     } catch (error) {
       console.error('Error saving transactions:', error);
-      toast.error('Failed to save transactions');
+      toast.error(error instanceof Error ? error.message : 'Failed to save transactions');
     } finally {
       setIsUploading(false);
     }

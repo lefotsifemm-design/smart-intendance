@@ -5,20 +5,14 @@ import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import { supabase } from '@/lib/supabase';
 import { useCurrency } from '@/hooks/use-currency';
-import { TrendingUp, TrendingDown, DollarSign, FileText, Upload, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import {
+  TrendingUp, TrendingDown, DollarSign, FileText,
+  Upload, ArrowUpRight, ArrowDownRight, Trash2,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  PieChart,
-  Pie,
-  Cell,
-  ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  PieChart, Pie, Cell, ResponsiveContainer,
 } from 'recharts';
 
 interface Transaction {
@@ -32,15 +26,33 @@ interface Transaction {
   created_at: string;
 }
 
-const EXPENSE_COLORS = [
-  '#ef4444', '#f97316', '#f59e0b', '#84cc16', '#10b981',
-  '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899', '#6366f1',
+const INCOME_COLORS = [
+  '#10b981', '#06b6d4', '#3b82f6', '#8b5cf6', '#6366f1',
+  '#14b8a6', '#22c55e', '#0ea5e9', '#a855f7', '#64748b',
 ];
+const EXPENSE_COLORS = [
+  '#ef4444', '#f97316', '#f59e0b', '#84cc16', '#ec4899',
+  '#06b6d4', '#3b82f6', '#8b5cf6', '#6366f1', '#64748b',
+];
+
+type Period = 'all' | '30d' | '90d' | '180d';
+
+function isWithinDays(dateStr: string | null, days: number): boolean {
+  if (!dateStr) return false;
+  const d = new Date(dateStr);
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - days);
+  return d >= cutoff;
+}
 
 function monthKey(dateStr: string | null): string {
   if (!dateStr) return 'Unknown';
   const d = new Date(dateStr);
-  return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+  return d.toLocaleDateString('ru-RU', { month: 'short', year: '2-digit' });
+}
+
+function formatAmount(n: number, symbol: string) {
+  return `${symbol}${n.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export default function StatementsPage() {
@@ -50,6 +62,9 @@ export default function StatementsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | 'income' | 'expense'>('all');
+  const [period, setPeriod] = useState<Period>('all');
+  const [categoryTab, setCategoryTab] = useState<'expense' | 'income'>('expense');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (session?.user?.id) loadTransactions();
@@ -72,50 +87,87 @@ export default function StatementsPage() {
     }
   };
 
+  const periodFiltered = useMemo(() => {
+    if (period === 'all') return transactions;
+    const days = period === '30d' ? 30 : period === '90d' ? 90 : 180;
+    return transactions.filter((t) => isWithinDays(t.date, days));
+  }, [transactions, period]);
+
   const totalIncome = useMemo(
-    () => transactions.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0),
-    [transactions]
+    () => periodFiltered.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0),
+    [periodFiltered]
   );
   const totalExpenses = useMemo(
-    () => transactions.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0),
-    [transactions]
+    () => periodFiltered.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0),
+    [periodFiltered]
   );
   const net = totalIncome - totalExpenses;
 
   const monthlyData = useMemo(() => {
     const map: Record<string, { month: string; income: number; expenses: number; net: number }> = {};
-    transactions.forEach((t) => {
+    periodFiltered.forEach((t) => {
       const m = monthKey(t.date);
       if (!map[m]) map[m] = { month: m, income: 0, expenses: 0, net: 0 };
       if (t.type === 'income') map[m].income += t.amount;
       else map[m].expenses += t.amount;
     });
     return Object.values(map)
-      .map((d) => ({ ...d, net: parseFloat((d.income - d.expenses).toFixed(2)), income: parseFloat(d.income.toFixed(2)), expenses: parseFloat(d.expenses.toFixed(2)) }))
+      .map((d) => ({
+        ...d,
+        net: parseFloat((d.income - d.expenses).toFixed(2)),
+        income: parseFloat(d.income.toFixed(2)),
+        expenses: parseFloat(d.expenses.toFixed(2)),
+      }))
       .reverse();
-  }, [transactions]);
+  }, [periodFiltered]);
 
   const expenseCategoryData = useMemo(() => {
     const map: Record<string, number> = {};
-    transactions
-      .filter((t) => t.type === 'expense')
-      .forEach((t) => {
-        map[t.category] = (map[t.category] || 0) + t.amount;
-      });
+    periodFiltered.filter((t) => t.type === 'expense').forEach((t) => {
+      map[t.category || 'Other'] = (map[t.category || 'Other'] || 0) + t.amount;
+    });
     return Object.entries(map)
       .map(([name, value], i) => ({ name, value: parseFloat(value.toFixed(2)), color: EXPENSE_COLORS[i % EXPENSE_COLORS.length] }))
       .sort((a, b) => b.value - a.value);
-  }, [transactions]);
+  }, [periodFiltered]);
+
+  const incomeCategoryData = useMemo(() => {
+    const map: Record<string, number> = {};
+    periodFiltered.filter((t) => t.type === 'income').forEach((t) => {
+      map[t.category || 'Other'] = (map[t.category || 'Other'] || 0) + t.amount;
+    });
+    return Object.entries(map)
+      .map(([name, value], i) => ({ name, value: parseFloat(value.toFixed(2)), color: INCOME_COLORS[i % INCOME_COLORS.length] }))
+      .sort((a, b) => b.value - a.value);
+  }, [periodFiltered]);
+
+  const activeCategoryData = categoryTab === 'expense' ? expenseCategoryData : incomeCategoryData;
+  const activeCategoryTotal = categoryTab === 'expense' ? totalExpenses : totalIncome;
 
   const filtered = useMemo(() => {
-    return transactions.filter((t) => {
+    return periodFiltered.filter((t) => {
       if (typeFilter !== 'all' && t.type !== typeFilter) return false;
-      if (search && !t.description?.toLowerCase().includes(search.toLowerCase()) &&
-          !t.counterparty?.toLowerCase().includes(search.toLowerCase()) &&
-          !t.category?.toLowerCase().includes(search.toLowerCase())) return false;
+      const q = search.toLowerCase();
+      if (q && !t.description?.toLowerCase().includes(q) &&
+          !t.counterparty?.toLowerCase().includes(q) &&
+          !t.category?.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [transactions, typeFilter, search]);
+  }, [periodFiltered, typeFilter, search]);
+
+  const handleDelete = async (id: string) => {
+    setDeletingId(id);
+    try {
+      const response = await fetch(`/api/delete-transaction?id=${id}`, { method: 'DELETE' });
+      if (!response.ok) throw new Error('Failed to delete');
+      setTransactions((prev) => prev.filter((t) => t.id !== id));
+      toast.success('Transaction deleted');
+    } catch {
+      toast.error('Failed to delete transaction');
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   if (loading) {
     return (
@@ -148,114 +200,176 @@ export default function StatementsPage() {
   }
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">Statements</h1>
-        <p className="text-gray-600 mt-1">P&L breakdown from your bank statement</p>
+    <div className="space-y-6">
+      {/* Header + period filter */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">Statements</h1>
+          <p className="text-gray-600 mt-1">P&L breakdown from your bank statements</p>
+        </div>
+        <div className="flex items-center gap-1 p-1 bg-gray-100 rounded-xl self-start sm:self-auto">
+          {(['all', '30d', '90d', '180d'] as Period[]).map((p) => (
+            <button
+              key={p}
+              onClick={() => setPeriod(p)}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition ${
+                period === p ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {p === 'all' ? 'All time' : p}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <div className="flex items-center gap-3 mb-2">
+          <div className="flex items-center gap-3 mb-3">
             <div className="w-9 h-9 bg-green-100 rounded-lg flex items-center justify-center">
               <ArrowUpRight className="w-4 h-4 text-green-600" />
             </div>
-            <p className="text-sm text-gray-500">Total Income</p>
+            <p className="text-sm text-gray-500 font-medium">Income</p>
           </div>
-          <p className="text-2xl font-bold text-green-700">{symbol}{totalIncome.toFixed(2)}</p>
+          <p className="text-2xl font-bold text-green-700">{formatAmount(totalIncome, symbol)}</p>
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <div className="flex items-center gap-3 mb-2">
+          <div className="flex items-center gap-3 mb-3">
             <div className="w-9 h-9 bg-red-100 rounded-lg flex items-center justify-center">
               <ArrowDownRight className="w-4 h-4 text-red-600" />
             </div>
-            <p className="text-sm text-gray-500">Total Expenses</p>
+            <p className="text-sm text-gray-500 font-medium">Expenses</p>
           </div>
-          <p className="text-2xl font-bold text-red-700">{symbol}{totalExpenses.toFixed(2)}</p>
+          <p className="text-2xl font-bold text-red-700">{formatAmount(totalExpenses, symbol)}</p>
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <div className="flex items-center gap-3 mb-2">
+          <div className="flex items-center gap-3 mb-3">
             <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${net >= 0 ? 'bg-blue-100' : 'bg-orange-100'}`}>
               <DollarSign className={`w-4 h-4 ${net >= 0 ? 'text-blue-600' : 'text-orange-600'}`} />
             </div>
-            <p className="text-sm text-gray-500">Net</p>
+            <p className="text-sm text-gray-500 font-medium">Net</p>
           </div>
           <p className={`text-2xl font-bold ${net >= 0 ? 'text-blue-700' : 'text-orange-700'}`}>
-            {net >= 0 ? '+' : ''}{symbol}{Math.abs(net).toFixed(2)}
+            {net >= 0 ? '+' : ''}{formatAmount(Math.abs(net), symbol)}
           </p>
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <div className="flex items-center gap-3 mb-2">
+          <div className="flex items-center gap-3 mb-3">
             <div className="w-9 h-9 bg-gray-100 rounded-lg flex items-center justify-center">
               <FileText className="w-4 h-4 text-gray-600" />
             </div>
-            <p className="text-sm text-gray-500">Transactions</p>
+            <p className="text-sm text-gray-500 font-medium">Transactions</p>
           </div>
-          <p className="text-2xl font-bold text-gray-900">{transactions.length}</p>
+          <p className="text-2xl font-bold text-gray-900">{periodFiltered.length}</p>
         </div>
       </div>
 
-      {/* Charts */}
-      {monthlyData.length > 1 && (
+      {/* Monthly bar chart */}
+      {monthlyData.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-200 p-6">
           <h2 className="text-lg font-bold text-gray-900 mb-6">Monthly Cash Flow</h2>
-          <ResponsiveContainer width="100%" height={280}>
-            <LineChart data={monthlyData} margin={{ left: 8, right: 8 }}>
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={monthlyData} margin={{ left: 8, right: 8 }} barGap={4}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-              <YAxis tickFormatter={(v) => `${symbol}${v}`} tick={{ fontSize: 11 }} width={70} />
-              <Tooltip formatter={(v) => `${symbol}${Number(v).toFixed(2)}`} />
+              <YAxis
+                tickFormatter={(v) => `${symbol}${(v / 1000).toFixed(0)}k`}
+                tick={{ fontSize: 11 }}
+                width={60}
+              />
+              <Tooltip formatter={(v) => formatAmount(Number(v), symbol)} />
               <Legend />
-              <Line type="monotone" dataKey="income" stroke="#10b981" strokeWidth={2} dot={false} name="Income" />
-              <Line type="monotone" dataKey="expenses" stroke="#ef4444" strokeWidth={2} dot={false} name="Expenses" />
-              <Line type="monotone" dataKey="net" stroke="#3b82f6" strokeWidth={2} dot={false} strokeDasharray="4 2" name="Net" />
-            </LineChart>
+              <Bar dataKey="income" name="Income" fill="#10b981" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="expenses" name="Expenses" fill="#ef4444" radius={[4, 4, 0, 0]} />
+            </BarChart>
           </ResponsiveContainer>
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {expenseCategoryData.length > 0 && (
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <h2 className="text-lg font-bold text-gray-900 mb-6">Expense Breakdown</h2>
-            <ResponsiveContainer width="100%" height={260}>
+      {/* Category breakdown (Income / Expense tabs) */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+        {/* Pie chart */}
+        <div className="lg:col-span-2 bg-white rounded-xl border border-gray-200 p-6">
+          {/* Tab toggle */}
+          <div className="flex items-center gap-1 p-1 bg-gray-100 rounded-lg mb-5 w-fit">
+            <button
+              onClick={() => setCategoryTab('expense')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition ${
+                categoryTab === 'expense' ? 'bg-white shadow-sm text-red-700' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Expenses
+            </button>
+            <button
+              onClick={() => setCategoryTab('income')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition ${
+                categoryTab === 'income' ? 'bg-white shadow-sm text-green-700' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Income
+            </button>
+          </div>
+          <h2 className="text-lg font-bold text-gray-900 mb-4">
+            {categoryTab === 'expense' ? 'Expense' : 'Income'} Breakdown
+          </h2>
+          {activeCategoryData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={220}>
               <PieChart>
-                <Pie data={expenseCategoryData} cx="50%" cy="50%" innerRadius={55} outerRadius={95} paddingAngle={3} dataKey="value">
-                  {expenseCategoryData.map((entry, i) => (
+                <Pie
+                  data={activeCategoryData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={50}
+                  outerRadius={85}
+                  paddingAngle={3}
+                  dataKey="value"
+                >
+                  {activeCategoryData.map((entry, i) => (
                     <Cell key={i} fill={entry.color} />
                   ))}
                 </Pie>
-                <Tooltip formatter={(v) => [`${symbol}${Number(v).toFixed(2)}`, 'Amount']} />
-                <Legend formatter={(v) => <span className="text-xs text-gray-700">{v}</span>} />
+                <Tooltip formatter={(v) => [formatAmount(Number(v), symbol), 'Amount']} />
               </PieChart>
             </ResponsiveContainer>
-          </div>
-        )}
+          ) : (
+            <div className="h-[220px] flex items-center justify-center text-gray-400 text-sm">
+              No {categoryTab} data
+            </div>
+          )}
+        </div>
 
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-lg font-bold text-gray-900 mb-4">Top Expense Categories</h2>
+        {/* Category bars */}
+        <div className="lg:col-span-3 bg-white rounded-xl border border-gray-200 p-6">
+          <h2 className="text-lg font-bold text-gray-900 mb-5">
+            Top {categoryTab === 'expense' ? 'Expense' : 'Income'} Categories
+          </h2>
           <div className="space-y-3">
-            {expenseCategoryData.slice(0, 6).map((cat) => (
-              <div key={cat.name} className="flex items-center gap-3">
-                <div className="w-3 h-3 rounded-full shrink-0" style={{ background: cat.color }} />
-                <div className="flex-1 min-w-0">
+            {activeCategoryData.slice(0, 8).map((cat) => {
+              const pct = activeCategoryTotal > 0 ? (cat.value / activeCategoryTotal) * 100 : 0;
+              return (
+                <div key={cat.name}>
                   <div className="flex justify-between items-center mb-1">
-                    <span className="text-sm text-gray-700 truncate">{cat.name}</span>
-                    <span className="text-sm font-semibold text-gray-900 ml-2">{symbol}{cat.value.toFixed(2)}</span>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: cat.color }} />
+                      <span className="text-sm text-gray-700 truncate">{cat.name}</span>
+                    </div>
+                    <div className="text-right ml-3 shrink-0">
+                      <span className="text-sm font-semibold text-gray-900">{formatAmount(cat.value, symbol)}</span>
+                      <span className="text-xs text-gray-400 ml-1">{pct.toFixed(0)}%</span>
+                    </div>
                   </div>
                   <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
                     <div
-                      className="h-full rounded-full"
-                      style={{ width: `${(cat.value / expenseCategoryData[0].value) * 100}%`, background: cat.color }}
+                      className="h-full rounded-full transition-all"
+                      style={{ width: `${pct}%`, background: cat.color }}
                     />
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>
@@ -267,7 +381,7 @@ export default function StatementsPage() {
           <div className="flex flex-col sm:flex-row gap-3">
             <input
               type="text"
-              placeholder="Search description, counterparty, category…"
+              placeholder="Search description, category, counterparty…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -286,13 +400,14 @@ export default function StatementsPage() {
               ))}
             </div>
           </div>
+          <p className="text-xs text-gray-400">{filtered.length} transactions</p>
         </div>
-        <div className="divide-y divide-gray-100 max-h-[500px] overflow-y-auto">
+        <div className="divide-y divide-gray-100 max-h-[520px] overflow-y-auto">
           {filtered.length === 0 ? (
             <p className="text-center text-gray-400 text-sm py-10">No transactions match your filters.</p>
           ) : (
             filtered.map((t) => (
-              <div key={t.id} className="flex items-center justify-between px-6 py-3 hover:bg-gray-50">
+              <div key={t.id} className="flex items-center justify-between px-6 py-3 hover:bg-gray-50 group">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
                     t.type === 'income' ? 'bg-green-100' : 'bg-red-100'
@@ -302,15 +417,35 @@ export default function StatementsPage() {
                       : <TrendingDown className="w-4 h-4 text-red-600" />}
                   </div>
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">{t.description || t.counterparty || '—'}</p>
-                    <p className="text-xs text-gray-500 truncate">
-                      {t.category}{t.date ? ` · ${new Date(t.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}
+                    <p className="text-sm font-medium text-gray-900 truncate">
+                      {t.description || t.counterparty || '—'}
                     </p>
+                    <div className="flex items-center gap-2">
+                      <span className={`inline-block px-1.5 py-0.5 text-xs rounded font-medium ${
+                        t.type === 'income' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+                      }`}>
+                        {t.category || 'Other'}
+                      </span>
+                      {t.date && (
+                        <span className="text-xs text-gray-400">
+                          {new Date(t.date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
-                <p className={`text-sm font-semibold ml-4 shrink-0 ${t.type === 'income' ? 'text-green-700' : 'text-red-700'}`}>
-                  {t.type === 'income' ? '+' : '-'}{symbol}{t.amount.toFixed(2)}
-                </p>
+                <div className="flex items-center gap-3 ml-4 shrink-0">
+                  <p className={`text-sm font-semibold ${t.type === 'income' ? 'text-green-700' : 'text-red-700'}`}>
+                    {t.type === 'income' ? '+' : '−'}{formatAmount(t.amount, symbol)}
+                  </p>
+                  <button
+                    onClick={() => handleDelete(t.id)}
+                    disabled={deletingId === t.id}
+                    className="opacity-0 group-hover:opacity-100 transition p-1 rounded hover:bg-red-50 text-gray-300 hover:text-red-500 disabled:opacity-50"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
             ))
           )}
