@@ -81,17 +81,27 @@ IMPORTANT: Return empty array [] only if the file has no parseable transactions.
         { role: 'user', content: prompt },
       ],
       temperature: 0.1,
-      max_tokens: 8000,
+      max_tokens: 16000,
     });
 
     const content = response.choices[0].message.content || '[]';
     let transactions;
     try {
       const clean = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-      transactions = JSON.parse(clean);
+      try {
+        transactions = JSON.parse(clean);
+      } catch {
+        // Salvage truncated JSON: find the last complete object and close the array
+        const lastBrace = clean.lastIndexOf('}');
+        if (lastBrace > 0) {
+          transactions = JSON.parse(clean.substring(0, lastBrace + 1) + ']');
+        } else {
+          throw new Error('Cannot parse AI response');
+        }
+      }
     } catch {
       return NextResponse.json(
-        { error: 'Failed to parse AI response', details: content },
+        { error: 'Failed to parse AI response. The statement may be too large — try splitting it into smaller date ranges.' },
         { status: 500 }
       );
     }

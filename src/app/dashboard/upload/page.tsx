@@ -39,6 +39,12 @@ function excelToCsv(file: File): Promise<string> {
 }
 
 async function pdfToText(file: File): Promise<string> {
+  // Polyfill for Math.sumPrecise — required by pdfjs-dist 5.x, missing in some browsers
+  if (typeof (Math as unknown as Record<string, unknown>).sumPrecise === 'undefined') {
+    (Math as unknown as Record<string, unknown>).sumPrecise = (values: Iterable<number>) =>
+      [...values].reduce((a: number, b: number) => a + b, 0);
+  }
+
   pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
     'pdfjs-dist/build/pdf.worker.min.mjs',
     import.meta.url
