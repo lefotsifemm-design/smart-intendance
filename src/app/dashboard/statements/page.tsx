@@ -7,7 +7,7 @@ import { supabase } from '@/lib/supabase';
 import { useCurrency } from '@/hooks/use-currency';
 import {
   TrendingUp, TrendingDown, DollarSign, FileText,
-  Upload, ArrowUpRight, ArrowDownRight, Trash2,
+  Upload, ArrowUpRight, ArrowDownRight, Trash2, Eraser,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -65,6 +65,8 @@ export default function StatementsPage() {
   const [period, setPeriod] = useState<Period>('all');
   const [categoryTab, setCategoryTab] = useState<'expense' | 'income'>('expense');
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [clearingAll, setClearingAll] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
 
   useEffect(() => {
     if (session?.user?.id) loadTransactions();
@@ -155,6 +157,22 @@ export default function StatementsPage() {
     });
   }, [periodFiltered, typeFilter, search]);
 
+  const handleClearAll = async () => {
+    setClearingAll(true);
+    try {
+      const response = await fetch('/api/delete-all-transactions', { method: 'DELETE' });
+      if (!response.ok) throw new Error('Failed to clear');
+      const data = await response.json();
+      setTransactions([]);
+      setConfirmClear(false);
+      toast.success(`Deleted ${data.deleted} transactions`);
+    } catch {
+      toast.error('Failed to clear transactions');
+    } finally {
+      setClearingAll(false);
+    }
+  };
+
   const handleDelete = async (id: string) => {
     setDeletingId(id);
     try {
@@ -207,18 +225,47 @@ export default function StatementsPage() {
           <h1 className="text-3xl font-bold text-gray-900">Statements</h1>
           <p className="text-gray-600 mt-1">P&L breakdown from your bank statements</p>
         </div>
-        <div className="flex items-center gap-1 p-1 bg-gray-100 rounded-xl self-start sm:self-auto">
-          {(['all', '30d', '90d', '180d'] as Period[]).map((p) => (
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          <div className="flex items-center gap-1 p-1 bg-gray-100 rounded-xl">
+            {(['all', '30d', '90d', '180d'] as Period[]).map((p) => (
+              <button
+                key={p}
+                onClick={() => setPeriod(p)}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition ${
+                  period === p ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {p === 'all' ? 'All time' : p}
+              </button>
+            ))}
+          </div>
+          {/* Clear all */}
+          {!confirmClear ? (
             <button
-              key={p}
-              onClick={() => setPeriod(p)}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition ${
-                period === p ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
-              }`}
+              onClick={() => setConfirmClear(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 border border-red-200 rounded-lg transition"
             >
-              {p === 'all' ? 'All time' : p}
+              <Eraser className="w-3.5 h-3.5" />
+              Clear All
             </button>
-          ))}
+          ) : (
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-red-700 font-medium">Delete all {transactions.length} transactions?</span>
+              <button
+                onClick={handleClearAll}
+                disabled={clearingAll}
+                className="px-2.5 py-1 text-xs font-semibold bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 transition"
+              >
+                {clearingAll ? '...' : 'Yes'}
+              </button>
+              <button
+                onClick={() => setConfirmClear(false)}
+                className="px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-100 rounded-lg transition"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

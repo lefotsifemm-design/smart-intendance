@@ -85,15 +85,27 @@ export default function DashboardPage() {
   const loadSubscriptions = async () => {
     if (!session?.user?.id) return;
     try {
-      const { data, error } = await supabase
+      // Try with deleted_at filter first; if column doesn't exist fall back without it
+      let query = supabase
         .from('subscriptions')
         .select('*')
-        .eq('user_id', session.user.id)
+        .eq('user_id', session.user.id);
+
+      const { data, error } = await query
         .is('deleted_at', null)
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
-      setSubscriptions(data || []);
+      if (error) {
+        // deleted_at or created_at column missing — fetch without them
+        const { data: fallback, error: fallbackError } = await supabase
+          .from('subscriptions')
+          .select('*')
+          .eq('user_id', session.user.id);
+        if (fallbackError) throw fallbackError;
+        setSubscriptions((fallback || []).filter((s: Subscription) => !s.deleted_at));
+      } else {
+        setSubscriptions(data || []);
+      }
     } catch (error) {
       console.error('Error loading subscriptions:', error);
       toast.error('Failed to load subscriptions');
@@ -111,10 +123,14 @@ export default function DashboardPage() {
         .eq('user_id', session.user.id)
         .not('deleted_at', 'is', null)
         .order('deleted_at', { ascending: false });
-      if (error) throw error;
+      if (error) {
+        // deleted_at column doesn't exist yet — skip trash silently
+        setTrashedSubscriptions([]);
+        return;
+      }
       setTrashedSubscriptions(data || []);
     } catch {
-      toast.error('Failed to load trash');
+      setTrashedSubscriptions([]);
     }
   };
 
