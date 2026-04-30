@@ -3,13 +3,14 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, Upload, BarChart3, Settings, Menu, X, LineChart } from 'lucide-react';
+import { Home, Upload, BarChart3, Settings, Menu, X, LineChart, Target } from 'lucide-react';
 
 const NAV = [
   { href: '/dashboard', icon: Home, label: 'Overview' },
   { href: '/dashboard/upload', icon: Upload, label: 'Upload' },
   { href: '/dashboard/analytics', icon: BarChart3, label: 'Analytics' },
   { href: '/dashboard/statements', icon: LineChart, label: 'Statements' },
+  { href: '/dashboard/budgets', icon: Target, label: 'Budgets' },
   { href: '/dashboard/settings', icon: Settings, label: 'Settings' },
 ];
 

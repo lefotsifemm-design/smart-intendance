@@ -6,7 +6,11 @@
       "Bash(npx tsc *)",
       "Bash(npm run *)",
       "Bash(xargs grep *)",
-      "Bash(node -e \"const p = require\\('pdfjs-dist/package.json'\\); console.log\\(p.version\\)\")"
+      "Bash(node -e \"const p = require\\('pdfjs-dist/package.json'\\); console.log\\(p.version\\)\")",
+      "Bash(npx next *)",
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "mcp__scheduled-tasks__create_scheduled_task",
+      "Bash(npx vitest *)"
     ]
   }
 }

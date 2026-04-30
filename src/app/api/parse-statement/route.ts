@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
+import { auth } from '@/auth';
+import { checkRateLimit } from '@/lib/rate-limit';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // Split large text into chunks at natural line boundaries
-function splitIntoChunks(content: string, maxChars = 30000): string[] {
+export function splitIntoChunks(content: string, maxChars = 30000): string[] {
   if (content.length <= maxChars) return [content];
   const chunks: string[] = [];
   let start = 0;
@@ -64,7 +66,7 @@ OUTPUT: valid JSON array only, no markdown:
 Return [] only if truly no transactions found.`;
 }
 
-function parseJSON(raw: string): unknown[] {
+export function parseJSON(raw: string): unknown[] {
   const clean = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
   try {
     return JSON.parse(clean);
@@ -79,6 +81,19 @@ function parseJSON(raw: string): unknown[] {
 
 export async function POST(request: NextRequest) {
   try {
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { allowed, remaining, resetIn } = checkRateLimit(session.user.id);
+    if (!allowed) {
+      return NextResponse.json(
+        { error: `Rate limit exceeded. Try again in ${Math.ceil(resetIn / 60)} minutes.` },
+        { status: 429, headers: { 'X-RateLimit-Remaining': '0', 'X-RateLimit-Reset': String(resetIn) } }
+      );
+    }
+
     const { csvContent } = await request.json();
 
     if (!csvContent || csvContent.trim().length < 20) {

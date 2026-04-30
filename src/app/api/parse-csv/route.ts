@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
+import { auth } from '@/auth';
+import { checkRateLimit } from '@/lib/rate-limit';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -7,6 +9,19 @@ const openai = new OpenAI({
 
 export async function POST(request: NextRequest) {
   try {
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { allowed, remaining, resetIn } = checkRateLimit(session.user.id);
+    if (!allowed) {
+      return NextResponse.json(
+        { error: `Rate limit exceeded. Try again in ${Math.ceil(resetIn / 60)} minutes.` },
+        { status: 429, headers: { 'X-RateLimit-Remaining': '0', 'X-RateLimit-Reset': String(resetIn) } }
+      );
+    }
+
     const { csvContent } = await request.json();
 
     if (!csvContent) {
@@ -16,7 +31,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if CSV is empty or too short
     if (csvContent.trim().length < 20) {
       return NextResponse.json(
         { error: 'CSV file appears to be empty or too short' },
@@ -24,7 +38,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check OpenAI API key
     if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json(
         { error: 'OpenAI API key not configured' },

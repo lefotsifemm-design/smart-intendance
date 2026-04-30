@@ -38,14 +38,37 @@ const EXPENSE_COLORS = [
 const STACK_COLORS = ['#ef4444', '#f97316', '#f59e0b', '#8b5cf6', '#06b6d4'];
 const DAY_NAMES = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
-type Period = 'all' | '30d' | '90d' | '180d';
+type Preset = 'all' | 'this_month' | 'last_month' | '3m' | '6m' | 'custom';
 
-function isWithinDays(dateStr: string | null, days: number): boolean {
+function presetToRange(preset: Preset): { from: string; to: string } | null {
+  if (preset === 'all') return null;
+  const now = new Date();
+  const to = now.toISOString().slice(0, 10);
+  if (preset === 'this_month') {
+    const from = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+    return { from, to };
+  }
+  if (preset === 'last_month') {
+    const from = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().slice(0, 10);
+    const toEnd = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().slice(0, 10);
+    return { from, to: toEnd };
+  }
+  if (preset === '3m') {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 3);
+    return { from: d.toISOString().slice(0, 10), to };
+  }
+  if (preset === '6m') {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 6);
+    return { from: d.toISOString().slice(0, 10), to };
+  }
+  return null;
+}
+
+function isInRange(dateStr: string | null, from: string, to: string): boolean {
   if (!dateStr) return false;
-  const d = new Date(dateStr);
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - days);
-  return d >= cutoff;
+  return dateStr >= from && dateStr <= to;
 }
 
 function monthKey(dateStr: string | null): string {
@@ -69,7 +92,9 @@ export default function StatementsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | 'income' | 'expense'>('all');
-  const [period, setPeriod] = useState<Period>('all');
+  const [preset, setPreset] = useState<Preset>('all');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
   const [categoryTab, setCategoryTab] = useState<'expense' | 'income'>('expense');
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [clearingAll, setClearingAll] = useState(false);
@@ -99,10 +124,14 @@ export default function StatementsPage() {
 
   // ── Period filter ───────────────────────────────────────────────────────────
   const periodFiltered = useMemo(() => {
-    if (period === 'all') return transactions;
-    const days = period === '30d' ? 30 : period === '90d' ? 90 : 180;
-    return transactions.filter((t) => isWithinDays(t.date, days));
-  }, [transactions, period]);
+    if (preset === 'custom') {
+      if (!customFrom || !customTo) return transactions;
+      return transactions.filter((t) => isInRange(t.date, customFrom, customTo));
+    }
+    const range = presetToRange(preset);
+    if (!range) return transactions;
+    return transactions.filter((t) => isInRange(t.date, range.from, range.to));
+  }, [transactions, preset, customFrom, customTo]);
 
   // ── Totals ──────────────────────────────────────────────────────────────────
   const totalIncome = useMemo(
@@ -345,18 +374,42 @@ export default function StatementsPage() {
         </div>
         <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
           <div className="flex items-center gap-1 p-1 bg-gray-100 rounded-xl">
-            {(['all', '30d', '90d', '180d'] as Period[]).map((p) => (
+            {([
+              ['all', 'All'],
+              ['this_month', 'This month'],
+              ['last_month', 'Last month'],
+              ['3m', '3 months'],
+              ['6m', '6 months'],
+              ['custom', 'Custom'],
+            ] as [Preset, string][]).map(([p, label]) => (
               <button
                 key={p}
-                onClick={() => setPeriod(p)}
+                onClick={() => setPreset(p)}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition ${
-                  period === p ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
+                  preset === p ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
                 }`}
               >
-                {p === 'all' ? 'All time' : p}
+                {label}
               </button>
             ))}
           </div>
+          {preset === 'custom' && (
+            <div className="flex items-center gap-1.5">
+              <input
+                type="date"
+                value={customFrom}
+                onChange={(e) => setCustomFrom(e.target.value)}
+                className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <span className="text-xs text-gray-400">—</span>
+              <input
+                type="date"
+                value={customTo}
+                onChange={(e) => setCustomTo(e.target.value)}
+                className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          )}
           {!confirmClear ? (
             <button
               onClick={() => setConfirmClear(true)}

@@ -1,14 +1,16 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import { supabase } from '@/lib/supabase';
-import { TrendingUp, DollarSign, Calendar, Package, Edit2, Trash2, Plus, Search, Upload, Download, RotateCcw, ChevronDown, ChevronUp } from 'lucide-react';
+import { TrendingUp, DollarSign, Calendar, Package, Edit2, Trash2, Plus, Search, Upload, Download, RotateCcw, ChevronDown, ChevronUp, Target, Activity, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { toast } from 'sonner';
 import SubscriptionModal from '@/components/subscription-modal';
+import Onboarding from '@/components/onboarding';
 import { useCurrency } from '@/hooks/use-currency';
 import { CATEGORIES } from '@/lib/constants';
+import { calculateHealthScore } from '@/lib/health-score';
 
 interface Subscription {
   id: string;
@@ -74,13 +76,36 @@ export default function DashboardPage() {
   const [trashedSubscriptions, setTrashedSubscriptions] = useState<Subscription[]>([]);
   const [trashOpen, setTrashOpen] = useState(false);
   const [confirmingPermDeleteId, setConfirmingPermDeleteId] = useState<string | null>(null);
+  const [hasTransactions, setHasTransactions] = useState<boolean | null>(null);
+  const [allTransactions, setAllTransactions] = useState<{ type: 'income' | 'expense'; amount: number; date: string | null; category: string }[]>([]);
+  const [budgets, setBudgets] = useState<{ id: string; category: string; amount: number }[]>([]);
 
   useEffect(() => {
     if (session?.user?.id) {
       loadSubscriptions();
       loadTrashed();
+      loadTransactionsAndBudgets();
     }
   }, [session?.user?.id]);
+
+  const loadTransactionsAndBudgets = async () => {
+    if (!session?.user?.id) return;
+    try {
+      const [txResult, budgetResult] = await Promise.all([
+        supabase
+          .from('transactions')
+          .select('type, amount, date, category')
+          .eq('user_id', session.user.id),
+        fetch('/api/budgets').then((r) => r.json()).catch(() => []),
+      ]);
+      const txData = txResult.data ?? [];
+      setAllTransactions(txData as typeof allTransactions);
+      setHasTransactions(txData.length > 0);
+      if (Array.isArray(budgetResult)) setBudgets(budgetResult);
+    } catch {
+      setHasTransactions(false);
+    }
+  };
 
   const loadSubscriptions = async () => {
     if (!session?.user?.id) return;
@@ -331,6 +356,38 @@ export default function DashboardPage() {
 
   const potentialSavings = duplicateCategories.reduce((sum, d) => sum + d.savings, 0);
 
+  const healthScore = useMemo(() => calculateHealthScore(allTransactions), [allTransactions]);
+
+  const budgetSummary = useMemo(() => {
+    if (budgets.length === 0) return null;
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
+    const monthExpenses = allTransactions.filter(
+      (t) => t.type === 'expense' && t.date && t.date >= monthStart && t.date <= monthEnd
+    );
+    const spendByCat = new Map<string, number>();
+    for (const t of monthExpenses) {
+      spendByCat.set(t.category, (spendByCat.get(t.category) ?? 0) + t.amount);
+    }
+    let totalBudget = 0;
+    let totalSpent = 0;
+    let overCount = 0;
+    for (const b of budgets) {
+      totalBudget += b.amount;
+      const spent = spendByCat.get(b.category) ?? 0;
+      totalSpent += spent;
+      if (spent > b.amount) overCount++;
+    }
+    return { totalBudget, totalSpent, overCount, pct: totalBudget > 0 ? totalSpent / totalBudget : 0 };
+  }, [budgets, allTransactions]);
+
+  const isNewUser = !loading && hasTransactions === false && subscriptions.length === 0;
+
+  if (isNewUser) {
+    return <Onboarding />;
+  }
+
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between">
@@ -421,6 +478,87 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* Health Score & Budget Summary */}
+      {(allTransactions.length > 0 || budgetSummary) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Health Score */}
+          {allTransactions.length > 0 && (
+            <div className="bg-white rounded-xl border border-gray-200 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <Activity className="w-5 h-5 text-blue-600" />
+                  <h3 className="font-semibold text-gray-900">Financial Health</h3>
+                </div>
+                <div className={`text-3xl font-bold ${
+                  healthScore.grade === 'A' ? 'text-green-600' :
+                  healthScore.grade === 'B' ? 'text-blue-600' :
+                  healthScore.grade === 'C' ? 'text-yellow-600' :
+                  'text-red-600'
+                }`}>
+                  {healthScore.score}
+                  <span className="text-lg font-medium text-gray-400 ml-1">/ 100</span>
+                </div>
+              </div>
+              <div className="space-y-2">
+                {healthScore.breakdown.map((b) => (
+                  <div key={b.label}>
+                    <div className="flex items-center justify-between text-xs mb-1">
+                      <span className="text-gray-600">{b.label}</span>
+                      <span className="text-gray-400">{b.score}/{b.max}</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${
+                          b.score / b.max >= 0.7 ? 'bg-green-500' : b.score / b.max >= 0.4 ? 'bg-yellow-500' : 'bg-red-500'
+                        }`}
+                        style={{ width: `${(b.score / b.max) * 100}%` }}
+                      />
+                    </div>
+                    <p className="text-[11px] text-gray-400 mt-0.5">{b.tip}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Budget Summary */}
+          {budgetSummary && (
+            <Link href="/dashboard/budgets" className="bg-white rounded-xl border border-gray-200 p-6 hover:border-blue-300 transition block">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <Target className="w-5 h-5 text-purple-600" />
+                  <h3 className="font-semibold text-gray-900">Budget This Month</h3>
+                </div>
+                {budgetSummary.overCount > 0 && (
+                  <span className="text-xs font-semibold bg-red-100 text-red-600 px-2 py-0.5 rounded-full">
+                    {budgetSummary.overCount} over
+                  </span>
+                )}
+              </div>
+              <div className="flex items-baseline gap-1 mb-3">
+                <span className={`text-3xl font-bold ${budgetSummary.pct > 1 ? 'text-red-600' : 'text-gray-900'}`}>
+                  {symbol}{budgetSummary.totalSpent.toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                </span>
+                <span className="text-sm text-gray-400">
+                  / {symbol}{budgetSummary.totalBudget.toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                </span>
+              </div>
+              <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden mb-2">
+                <div
+                  className={`h-full rounded-full transition-all ${
+                    budgetSummary.pct > 1 ? 'bg-red-500' : budgetSummary.pct > 0.8 ? 'bg-yellow-500' : 'bg-green-500'
+                  }`}
+                  style={{ width: `${Math.min(100, budgetSummary.pct * 100)}%` }}
+                />
+              </div>
+              <p className="text-xs text-gray-400">
+                {Math.round(budgetSummary.pct * 100)}% of monthly budget used
+              </p>
+            </Link>
+          )}
+        </div>
+      )}
 
       <div className="bg-white rounded-xl border border-gray-200">
         <div className="p-6 border-b border-gray-200 space-y-4">

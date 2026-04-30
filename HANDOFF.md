@@ -1,10 +1,11 @@
 # Smart Intendance — Session Handoff
 
-> Last updated: 2026-04-30
+> Last updated: 2026-04-30 (Phase 1–2 complete)
 
 ## What is this project
 
-**Smart Intendance** — SaaS subscription tracker with AI-powered bank statement parsing and full business P&L analytics.  
+**Smart Intendance** — financial analytics SaaS for individuals and small businesses. Upload bank statements in any format — AI categorizes every transaction, generates P&L reports, budget tracking, and health scores.
+
 Next.js 16 App Router · React 19 · TypeScript · Tailwind CSS 4 · Supabase · NextAuth 5 · OpenAI GPT-4o · Recharts 3 · xlsx · pdfjs-dist
 
 ---
@@ -13,170 +14,147 @@ Next.js 16 App Router · React 19 · TypeScript · Tailwind CSS 4 · Supabase ·
 
 | Route | Status | Notes |
 |---|---|---|
-| `/` | ✅ | Landing page |
+| `/` | ✅ | Full landing page: hero, features, how-it-works, CTA |
 | `/auth/signin` | ✅ | Google OAuth — NextAuth 5 JWT |
-| `/dashboard` | ✅ | Subscriptions list, stats, search/filter, Quick Add, Edit, soft-delete, Recycle Bin, CSV export |
-| `/dashboard/upload` | ✅ | Mode toggle: Subscriptions / Full Statement. Accepts CSV + Excel + **PDF**. AI parsing with preview modal |
+| `/dashboard` | ✅ | Subscriptions + stats + Health Score card + Budget Summary card. Shows onboarding wizard for new users |
+| `/dashboard/upload` | ✅ | Mode toggle: Subscriptions / Full Statement. CSV + Excel + PDF. AI parsing with preview |
 | `/dashboard/analytics` | ✅ | Pie (drill-down), bar chart, frequency breakdown, ranked table |
-| `/dashboard/statements` | ✅ | P&L summary, period filter, monthly bar chart, income/expense category tabs, transaction table with delete |
-| `/dashboard/settings` | ✅ | Google profile, currency selector, sign out, delete account |
-| `/api/parse-csv` | ✅ | CSV/Excel → GPT-4o → subscriptions with confidence scores |
-| `/api/parse-statement` | ✅ | CSV / Excel / **PDF text** → GPT-4o → all transactions classified. Handles Russian bank format |
-| `/api/save-transactions` | ✅ | Server-side insert to `transactions` using service role key (bypasses RLS) |
-| `/api/delete-transaction` | ✅ | Server-side delete from `transactions` using service role key |
+| `/dashboard/statements` | ✅ | P&L, date range picker (presets + custom), 8 analytics sections, transaction table |
+| `/dashboard/budgets` | ✅ | **NEW** — Set monthly limits per category, progress bars, over-budget alerts |
+| `/dashboard/settings` | ✅ | Google profile, currency selector, sign out, delete account, T-Bank section |
+| `/api/budgets` | ✅ | **NEW** — GET/POST/DELETE for budgets (upsert by user_id+category) |
+| `/api/demo-data` | ✅ | **NEW** — Loads 50 demo transactions (source='demo') for onboarding |
+| `/api/parse-csv` | ✅ | CSV/Excel → GPT-4o → subscriptions. **Now auth + rate-limited** |
+| `/api/parse-statement` | ✅ | CSV/Excel/PDF → GPT-4o → transactions. **Now auth + rate-limited** |
+| `/api/save-transactions` | ✅ | Server-side insert using service role key |
+| `/api/delete-transaction` | ✅ | Server-side delete using service role key |
+| `/api/delete-all-transactions` | ✅ | Bulk delete for "Clear All" |
+| `/api/tbank/*` | ⚠️ | Scaffolded, not live — needs ЮЛ registration + API keys |
 | `/api/auth/[...nextauth]` | ✅ | Google OAuth handler |
+
+---
+
+## What was built in this session (Phases 1–2)
+
+### Phase 1: Foundation & First Impression
+1. **Onboarding wizard** (`src/components/onboarding.tsx`)
+   - 2-step flow: currency picker → upload statement OR load demo data
+   - Shows automatically for users with 0 subscriptions + 0 transactions
+   - Integrated into `/dashboard` page
+
+2. **Demo data** (`src/lib/demo-data.ts`, `src/app/api/demo-data/route.ts`)
+   - 50 realistic Russian transactions across 2 months
+   - Categories: salary, freelance, food, transport, subscriptions, fitness, etc.
+   - Source field = 'demo' for easy cleanup later
+
+3. **Landing page redesign** (`src/app/page.tsx`)
+   - Hero with gradient + tagline
+   - 3 feature cards (AI categorization, deep analytics, budget tracking)
+   - "How it works" 3-step section
+   - Bottom CTA section with gradient bg
+   - Header + footer
+
+4. **Rate limiting** (`src/lib/rate-limit.ts`)
+   - In-memory, per user_id, 10 requests/hour
+   - Applied to `/api/parse-statement` and `/api/parse-csv`
+   - Returns 429 with reset time
+
+### Phase 2: Core Value Features
+5. **Budgeting — plan vs fact**
+   - SQL: `supabase/budgets.sql` — `budgets` table with UNIQUE(user_id, category)
+   - API: `src/app/api/budgets/route.ts` — GET, POST (upsert), DELETE
+   - Page: `src/app/dashboard/budgets/page.tsx` — add/remove budgets, per-category progress bars, total usage bar
+   - Dashboard card: budget summary (spent/total, % used, over-count) linking to /budgets
+   - Sidebar + header nav updated
+
+6. **Business Health Score** (`src/lib/health-score.ts`)
+   - 4 factors, 100 points total:
+     - Savings Rate (0–30): based on (income - expense) / income
+     - Income/Expense Ratio (0–25): penalizes when expenses > income
+     - Diversification (0–20): penalizes single-category concentration > 40%
+     - Monthly Trend (0–25): rewards decreasing expenses + growing income
+   - Grade: A (85+), B (70+), C (55+), D (40+), F (<40)
+   - Each factor has a tip/recommendation string
+   - Dashboard card: score, breakdown bars, tips
+
+7. **Date Range Picker** (replaced old 30d/90d/180d on Statements)
+   - Presets: All, This month, Last month, 3 months, 6 months
+   - Custom: from/to `<input type="date">` fields
+   - All charts and tables react to selected range
 
 ---
 
 ## Key architecture
 
 - **Auth**: NextAuth 5 JWT. `session.user.id = token.sub` (Google stable ID). `src/auth.ts`
-- **DB writes (transactions)**: Done via API routes (`/api/save-transactions`, `/api/delete-transaction`) using `SUPABASE_SERVICE_ROLE_KEY` — bypasses RLS. Required because NextAuth sessions ≠ Supabase auth sessions, so client-side anon key gets 401 on INSERT.
-- **DB reads (transactions)**: Still done client-side via anon key + `.eq('user_id', session.user.id)`. Works because SELECT RLS policy allows anon reads when user_id matches.
-- **DB writes (subscriptions)**: Still direct client-side Supabase — subscriptions table has a more permissive INSERT policy.
-- **Middleware**: `src/proxy.ts` — protects `/dashboard/*`
-- **Currency**: `src/hooks/use-currency.ts` — `useCurrency()` hook, persists to localStorage
-- **Categories (subscriptions)**: `src/lib/constants.ts` — `CATEGORIES` array
-- **Components**: `src/components/subscription-modal.tsx`, `src/components/sidebar.tsx`, `src/components/user-menu.tsx`
+- **DB writes (transactions/budgets)**: API routes with `SUPABASE_SERVICE_ROLE_KEY` — bypasses RLS
+- **DB reads**: Client-side via anon key + `.eq('user_id', session.user.id)`
+- **Rate limiting**: In-memory Map per user_id, 10 req/hr on AI endpoints
+- **Currency**: `src/hooks/use-currency.ts` — persists to localStorage
+- **Health Score**: Pure function in `src/lib/health-score.ts` — computed client-side from transactions array
 
 ---
 
 ## Supabase tables
 
 ### `subscriptions`
-```sql
-id          uuid primary key default gen_random_uuid()
-user_id     text not null           -- NextAuth token.sub
-name        text not null
-amount      numeric not null
-frequency   text not null           -- 'monthly' | 'annual'
-category    text
-merchant    text
-last_charge date
-source      text                    -- 'manual' | 'csv'
-confidence  integer                 -- 0-100
-created_at  timestamptz default now()
-updated_at  timestamptz
-deleted_at  timestamptz             -- NULL = active, set = soft-deleted (Recycle Bin)
+```
+id, user_id, name, amount, frequency, category, merchant, last_charge, source, confidence, created_at, updated_at, deleted_at
 ```
 
 ### `transactions`
-```sql
-id           uuid primary key default gen_random_uuid()
-user_id      text not null
-type         text not null check (type in ('income', 'expense'))
-category     text
-amount       numeric not null
-date         date
-description  text
-counterparty text
-source       text default 'csv'     -- 'csv' | 'pdf'
-created_at   timestamptz default now()
 ```
-> RLS enabled. Policy: `user_id = auth.uid()::text`. Server-side routes use service role key to bypass for writes.
+id, user_id, type ('income'|'expense'), category, amount, date, description, counterparty, source ('csv'|'pdf'|'demo'|'tbank'), created_at
+```
+RLS enabled. Server routes use service role key for writes.
 
-### SQL migrations (run if setting up fresh)
-- `supabase/transactions.sql` — creates `transactions` table + RLS
-- `supabase/soft_delete.sql` — adds `deleted_at` to `subscriptions`
+### `budgets` ⚠️ SQL NOT YET RUN
+```
+id, user_id, category (UNIQUE with user_id), amount, period ('monthly'|'annual'), created_at, updated_at
+```
+Migration file: `supabase/budgets.sql`
 
----
-
-## PDF support (new)
-
-### How it works
-1. User selects `.pdf` file in Upload → Full Statement tab
-2. Client-side `pdfToText()` (pdfjs-dist 5.x) extracts text page by page, groups items by Y-coordinate to reconstruct table rows
-3. Extracted text sent to `/api/parse-statement` as `csvContent` (same field, same route)
-4. GPT-4o classifies transactions — prompt now includes Russian bank format hints (Т-Банк, Сбербанк, etc.)
-
-### Known PDF quirks
-- `Math.sumPrecise` polyfill needed for pdfjs-dist 5.x in older browsers (already in `pdfToText()`)
-- Worker URL: `new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url)` — works with Next.js webpack
-- Large PDFs (200+ transactions) may need all 16000 output tokens; JSON salvage fallback handles truncation
-
-### Russian bank statement format handled
-- Amounts: `-1 000.00 ₽` / `+2 500,00 ₽` (space as thousands sep, ₽ symbol)
-- Dates: `DD.MM.YYYY` → converted to `YYYY-MM-DD`
-- Operations mapped: Оплата в → expense, Пополнение → income, Внутрибанковский перевод с → income, Внешний перевод по номеру телефона → expense, Инвесткопилка → Transfer Out expense, Кэшбэк → Cashback income
+### `tbank_connections` ⚠️ SQL NOT YET RUN
+```
+id, user_id (UNIQUE), access_token, refresh_token, expires_at, account_number, company_name, inn, connected_at, last_sync_at, created_at
+```
+Migration file: `supabase/tbank_connections.sql`
 
 ---
 
-## Features built (complete list)
+## Pipeline — next priorities
 
-### Dashboard (`/dashboard/page.tsx`)
-- Currency symbol everywhere via `useCurrency()`
-- Next billing date computed from `last_charge` (or `created_at`), advances to next future date. Red if ≤ 7 days
-- Inline delete confirm: Trash → "Delete / Cancel" pills
-- Search by name + filter by category + filter by frequency
-- Onboarding empty state: Quick Add + Upload CSV cards
-- Duplicate detection on add — toast warning
-- Potential Savings card — real savings from duplicate-category subs
-- CSV export button — `subscriptions-YYYY-MM-DD.csv`
-- "Added X ago" timestamp per row
-- Recycle Bin — soft delete, Restore + Delete forever
+### 🔴 Blocked until ЮЛ/ИП registration
+1. Payment processing (ЮКасса/Stripe)
+2. T-Bank Business API
+3. Auto-sync cron
 
-### Analytics (`/dashboard/analytics/page.tsx`)
-- Drill-down: click pie slice → filters ranked table. Non-selected slices fade. Active filter pill
+### 🟡 Phase 3: Engagement (no ЮЛ needed)
+4. Telegram bot — daily summary, budget alerts (`telegraf`)
+5. PWA — manifest.json, service worker, installable
+6. Email digest (weekly) via Resend
 
-### Upload (`/dashboard/upload/page.tsx`)
-- Mode toggle: Subscriptions / Full Statement
-- Accepts CSV, Excel (.xlsx/.xls), **PDF**
-- PDF: client-side text extraction via pdfjs-dist, no server round-trip for extraction
-- Statement mode → `/api/parse-statement` → preview (income/expense badges) → `/api/save-transactions` → redirect to Statements
-- `max_tokens: 16000` + JSON salvage for large PDFs
+### 🔵 Phase 4: Pre-Monetization
+7. Multi-account / projects
+8. Pricing page + waitlist (email collection, no payment)
+9. Billing gates (isPro checks, upgrade modals, no payment provider)
 
-### Statements (`/dashboard/statements/page.tsx`)
-- Period filter: All time / 30d / 90d / 180d
-- Summary cards: Income, Expenses, Net, Count
-- Monthly bar chart (income vs expenses per month)
-- Category breakdown with **Income / Expense tab toggle** — pie chart + ranked bars with % share
-- Transaction table: search, type filter (all/income/expense), date in ru-RU locale, hover-to-delete button
-
-### API routes
-- `/api/parse-statement` — prompt handles Russian + English bank statements, `max_tokens: 16000`, JSON salvage on truncation
-- `/api/save-transactions` — uses `SUPABASE_SERVICE_ROLE_KEY` to bypass RLS; validates session server-side
-- `/api/delete-transaction` — same pattern; scoped to `user_id` for safety
-
----
-
-## Next pipeline (ordered by priority)
-
-### 🟠 High
-**Budget / planned operations**
-- New table `budgets`: `category, amount, period (monthly|annual), user_id`
-- Dashboard card: budget vs actual per category
-- Simple form to set budget per category
-
-**Business health score card**
-- Rule-based score from existing data: expense growth rate, income/expense ratio, largest single expense %
-- Show on Statements page as a "Health" widget
-
-### 🟡 Medium
-**Telegram bot for daily reports**
-- `telegraf` npm package
-- Daily cron: fetch user's subscriptions/transactions → send summary
-- Requires storing Telegram `chat_id` per user in Supabase
-
-**Multi-account / projects**
-- New `projects` table: `id, user_id, name, color`
-- `transactions.project_id` FK
-- Filter statements by project
-
-### 🔵 Strategic
-**Bank API integrations**
-- Russian banks (Т-Банк, Sberbank) via Open Banking
-- Alternative: Zenmoney export → already supported via CSV/PDF
+### 🔧 Phase 5: Technical Hardening
+10. Test suite (Vitest + Playwright)
+11. Tech debt cleanup
+12. Security audit (CSP, CSRF, input sanitization)
 
 ---
 
 ## Known tech debt
 
 - `error: any` in `src/app/api/parse-csv/route.ts`
-- `setTimeout` for redirect in `upload/page.tsx` — should use `router.push` directly
-- No rate limiting on `/api/parse-csv` and `/api/parse-statement` — one user can exhaust OpenAI quota
-- Subscriptions still use client-side Supabase for writes — inconsistent with transactions pattern. Should migrate to API route with service role key
-- `loadTrashed` called on mount even when Trash is collapsed — minor
-- Excel preview shows raw CSV after conversion, not original Excel — cosmetic
+- `setTimeout` for redirect in `upload/page.tsx` — should use `router.push`
+- `loadTrashed` called on mount even when Trash collapsed
+- Excel preview shows raw CSV text (cosmetic)
+- Subscriptions still use client-side Supabase for writes — should migrate to API route
+- Rate limiter is in-memory — resets on server restart (fine for now, Redis later)
+- No test suite yet
 
 ---
 
@@ -190,8 +168,8 @@ npm run dev   # http://localhost:3000
 `.env.local` required:
 ```
 NEXT_PUBLIC_SUPABASE_URL=...
-NEXT_PUBLIC_SUPABASE_ANON_KEY=...          # sb_publishable_... (new Supabase format)
-SUPABASE_SERVICE_ROLE_KEY=...             # sb_secret_... — required for transaction writes
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
 OPENAI_API_KEY=...
 NEXTAUTH_URL=https://your-domain.com
 NEXTAUTH_SECRET=...
@@ -199,5 +177,6 @@ GOOGLE_CLIENT_ID=...
 GOOGLE_CLIENT_SECRET=...
 ```
 
-> `SUPABASE_SERVICE_ROLE_KEY` — find in Supabase Dashboard → Settings → API → service_role secret.  
-> Without it, saving transactions will fail with 401 (RLS blocks anon key inserts).
+### Pending SQL migrations (run in Supabase SQL Editor)
+1. `supabase/budgets.sql` — budgets table
+2. `supabase/tbank_connections.sql` — T-Bank connections (when ready)
