@@ -8,6 +8,7 @@ import { supabase } from '@/lib/supabase';
 import { Upload, ArrowLeft, Plus, FileText, Check, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { CATEGORIES } from '@/lib/constants';
+import { useCurrency } from '@/hooks/use-currency';
 import * as XLSX from 'xlsx';
 import * as pdfjsLib from 'pdfjs-dist';
 
@@ -117,6 +118,7 @@ interface ParsedTransaction {
 export default function UploadPage() {
   const router = useRouter();
   const { data: session } = useSession();
+  const { symbol } = useCurrency();
   const [uploadMode, setUploadMode] = useState<'subscriptions' | 'statement'>('subscriptions');
   const [activeTab, setActiveTab] = useState<'csv' | 'manual'>('manual');
   const [isUploading, setIsUploading] = useState(false);
@@ -526,7 +528,7 @@ export default function UploadPage() {
                 {/* Amount */}
                 <div>
                   <label className="block text-sm font-semibold text-gray-900 mb-2">
-                    Amount ($) <span className="text-red-500">*</span>
+                    Amount ({symbol}) <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="number"
@@ -744,7 +746,7 @@ export default function UploadPage() {
                           </span>
                           <div className="text-right">
                             <div className={`text-lg font-bold ${tx.type === 'income' ? 'text-green-700' : 'text-red-700'}`}>
-                              ${tx.amount.toFixed(2)}
+                              {symbol}{tx.amount.toFixed(2)}
                             </div>
                           </div>
                         </div>
@@ -774,7 +776,7 @@ export default function UploadPage() {
                       </div>
                       <div className="flex items-center gap-2 md:gap-4 w-full md:w-auto justify-between md:justify-end">
                         <div className="text-right">
-                          <div className="text-lg md:text-xl font-bold text-gray-900">${sub.amount}</div>
+                          <div className="text-lg md:text-xl font-bold text-gray-900">{symbol}{sub.amount}</div>
                           <div className="text-xs md:text-sm text-gray-500">{sub.frequency === 'monthly' ? '/month' : '/year'}</div>
                         </div>
                         <div className={`px-2 md:px-3 py-1 rounded-full text-xs md:text-sm font-semibold border ${getConfidenceBadge(sub.confidence)}`}>

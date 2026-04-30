@@ -13,10 +13,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'No transactions provided' }, { status: 400 });
   }
 
-  // Service role key bypasses RLS; falls back to anon key if not configured
   const supabaseAdmin = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } }
   );
 
   const rows = transactions.map((tx: {
