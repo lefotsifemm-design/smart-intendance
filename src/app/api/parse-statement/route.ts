@@ -16,21 +16,37 @@ export async function POST(request: NextRequest) {
     }
 
     const prompt = `
-You are a business financial analyst AI. Analyze this bank statement CSV and classify EVERY transaction — both income and expenses.
+You are a financial analyst AI. Analyze this bank statement (CSV, Excel export, or PDF extracted text) and classify EVERY transaction — both income and expenses.
 
-CSV DATA:
+STATEMENT DATA:
 ${csvContent}
 
-CLASSIFICATION RULES:
-1. Detect date, description/merchant, and amount columns automatically.
-2. Assign type: "income" if money came IN (salary, payments received, transfers in, refunds), "expense" if money went OUT.
-3. Assign one business category from the list below.
-4. Always use positive amounts regardless of sign in the CSV.
-5. Include ALL transactions — do not skip anything.
+PARSING RULES:
+1. Auto-detect date, description/merchant, and amount columns regardless of language or format.
+2. type "income" = money came IN (positive amounts, deposits, incoming transfers, refunds, cashback, salary).
+   type "expense" = money went OUT (negative amounts, payments, outgoing transfers).
+3. Always output positive amounts (strip the sign, use "type" to indicate direction).
+4. Include ALL transactions — do not skip anything.
+5. date must be in YYYY-MM-DD format. Russian dates are DD.MM.YYYY — convert them.
+
+RUSSIAN BANK STATEMENT HINTS (Т-Банк, Сбербанк, ВТБ, etc.):
+- Amounts use space as thousands separator and ₽ symbol: "-1 000.00 ₽" or "+2 500,00 ₽"
+- Positive (+) amounts = income; Negative (−) amounts = expense
+- "Оплата в ..." = store/merchant payment → expense
+- "Пополнение. ..." = incoming deposit → income
+- "Внутрибанковский перевод с договора ..." = incoming internal transfer → income
+- "Внешний перевод по номеру телефона ..." = outgoing phone transfer → expense
+- "Внутренний перевод на договор ..." = outgoing internal transfer → expense
+- "Перевод для пополнения счета Инвесткопилка" = investment savings transfer → expense
+- "Кэшбэк за обычные покупки" = cashback → income
+- "Возврат средств по операции ..." = refund → income
+- "Оплата услуг mBank.MTS / mBank.beeline" = mobile operator payment → expense
+- "Операция в других кредитных организациях" = other bank payment → expense
+- Use "Дата списания" (debit date) as the transaction date if two date columns exist
 
 BUSINESS CATEGORIES:
-- Income categories: Revenue, Payroll In, Refunds Received, Transfers In, Other Income
-- Expense categories: Payroll, Rent, Utilities, Marketing, IT & Software, Logistics, Taxes, Insurance, Legal, Bank Fees, Office Supplies, Travel, Meals, Other Expense
+- Income: Revenue, Payroll In, Refunds Received, Transfers In, Cashback, Other Income
+- Expense: Payroll, Rent, Utilities, Marketing, IT & Software, Logistics, Taxes, Insurance, Legal, Bank Fees, Office Supplies, Travel, Meals, Groceries, Transfer Out, Other Expense
 
 OUTPUT FORMAT (valid JSON only, no markdown):
 [
@@ -65,7 +81,7 @@ IMPORTANT: Return empty array [] only if the file has no parseable transactions.
         { role: 'user', content: prompt },
       ],
       temperature: 0.1,
-      max_tokens: 4000,
+      max_tokens: 8000,
     });
 
     const content = response.choices[0].message.content || '[]';

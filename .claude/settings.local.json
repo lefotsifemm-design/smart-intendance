@@ -4,7 +4,9 @@
       "Bash(npm install *)",
       "Bash(npm list *)",
       "Bash(npx tsc *)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(xargs grep *)",
+      "Bash(node -e \"const p = require\\('pdfjs-dist/package.json'\\); console.log\\(p.version\\)\")"
     ]
   }
 }

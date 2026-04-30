@@ -9,6 +9,7 @@ import { Upload, ArrowLeft, Plus, FileText, Check, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { CATEGORIES } from '@/lib/constants';
 import * as XLSX from 'xlsx';
+import * as pdfjsLib from 'pdfjs-dist';
 
 function fileToText(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -37,8 +38,53 @@ function excelToCsv(file: File): Promise<string> {
   });
 }
 
+async function pdfToText(file: File): Promise<string> {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+    'pdfjs-dist/build/pdf.worker.min.mjs',
+    import.meta.url
+  ).toString();
+
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const pageTexts: string[] = [];
+
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+    const page = await pdf.getPage(pageNum);
+    const textContent = await page.getTextContent();
+
+    // Group text items by Y coordinate to preserve table row structure
+    const rowMap = new Map<number, { x: number; str: string }[]>();
+    for (const item of textContent.items) {
+      if (!('str' in item) || !item.str.trim()) continue;
+      const transform = (item as { transform: number[]; str: string }).transform;
+      const y = Math.round(transform[5] / 3) * 3;
+      const x = transform[4];
+      if (!rowMap.has(y)) rowMap.set(y, []);
+      rowMap.get(y)!.push({ x, str: item.str });
+    }
+
+    // Sort rows top-to-bottom (PDF y-coords are bottom-up → descending)
+    const rows = [...rowMap.entries()]
+      .sort((a, b) => b[0] - a[0])
+      .map(([, items]) =>
+        items
+          .sort((a, b) => a.x - b.x)
+          .map((i) => i.str)
+          .join('\t')
+      );
+
+    pageTexts.push(rows.join('\n'));
+  }
+
+  return pageTexts.join('\n\n');
+}
+
 function isExcelFile(name: string) {
   return name.endsWith('.xlsx') || name.endsWith('.xls');
+}
+
+function isPdfFile(name: string) {
+  return name.toLowerCase().endsWith('.pdf');
 }
 
 interface ParsedSubscription {
@@ -90,21 +136,25 @@ export default function UploadPage() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.name.endsWith('.csv') && !isExcelFile(file.name)) {
-      toast.error('Please upload a CSV or Excel file (.csv, .xlsx, .xls)');
+    if (!file.name.endsWith('.csv') && !isExcelFile(file.name) && !isPdfFile(file.name)) {
+      toast.error('Please upload a CSV, Excel (.xlsx, .xls), or PDF file');
       return;
     }
 
     setCsvFile(file);
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const text = event.target?.result as string;
-      setCsvPreview(text.substring(0, 500));
-    };
-    reader.readAsText(file);
+    if (isPdfFile(file.name)) {
+      setCsvPreview(`PDF: ${file.name} (${(file.size / 1024).toFixed(0)} KB) — text will be extracted automatically on upload`);
+    } else {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const text = event.target?.result as string;
+        setCsvPreview(text.substring(0, 500));
+      };
+      reader.readAsText(file);
+    }
 
-    toast.success('CSV file loaded! Preview available below.');
+    toast.success('File loaded!');
   };
 
   const handleCsvUpload = async () => {
@@ -116,12 +166,20 @@ export default function UploadPage() {
     setIsUploading(true);
 
     try {
-      const csvContent = isExcelFile(csvFile.name)
-        ? await excelToCsv(csvFile)
-        : await fileToText(csvFile);
+      const csvContent = isPdfFile(csvFile.name)
+        ? await pdfToText(csvFile)
+        : isExcelFile(csvFile.name)
+          ? await excelToCsv(csvFile)
+          : await fileToText(csvFile);
 
       if (uploadMode === 'statement') {
-        toast.loading('AI is classifying all transactions... (10-20 sec)', { id: 'parsing' });
+        const isPdf = isPdfFile(csvFile.name);
+        toast.loading(
+          isPdf
+            ? 'Extracting PDF text and classifying transactions... (15-30 sec)'
+            : 'AI is classifying all transactions... (10-20 sec)',
+          { id: 'parsing' }
+        );
 
         const response = await fetch('/api/parse-statement', {
           method: 'POST',
@@ -542,7 +600,7 @@ export default function UploadPage() {
               <div className="border-2 border-dashed border-gray-300 rounded-lg p-12 text-center hover:border-blue-500 transition">
                 <input
                   type="file"
-                  accept=".csv,.xlsx,.xls"
+                  accept=".csv,.xlsx,.xls,.pdf"
                   onChange={handleFileSelect}
                   className="hidden"
                   id="csv-upload"
@@ -551,22 +609,24 @@ export default function UploadPage() {
                 <label htmlFor="csv-upload" className="cursor-pointer">
                   <Upload className="w-16 h-16 text-gray-400 mx-auto mb-4" />
                   <p className="text-lg font-semibold text-gray-900 mb-2">
-                    {csvFile ? csvFile.name : 'Upload CSV File'}
+                    {csvFile ? csvFile.name : 'Upload Bank Statement'}
                   </p>
                   <p className="text-gray-600">
                     {csvFile
                       ? 'Click to change file'
-                      : 'CSV, Excel (.xlsx, .xls) — bank statement or export'}
+                      : 'CSV, Excel (.xlsx, .xls) or PDF bank statement'}
                   </p>
                 </label>
               </div>
 
-              {/* CSV Preview */}
+              {/* File Preview */}
               {csvPreview && (
                 <div className="bg-gray-50 rounded-lg p-6">
-                  <h3 className="font-semibold text-gray-900 mb-3">Preview (first 500 chars)</h3>
+                  <h3 className="font-semibold text-gray-900 mb-3">
+                    {csvFile && isPdfFile(csvFile.name) ? 'File Info' : 'Preview (first 500 chars)'}
+                  </h3>
                   <pre className="text-sm text-gray-700 whitespace-pre-wrap font-mono">
-                    {csvPreview}...
+                    {csvFile && isPdfFile(csvFile.name) ? csvPreview : `${csvPreview}...`}
                   </pre>
                 </div>
               )}
@@ -574,8 +634,9 @@ export default function UploadPage() {
               {/* Info Message */}
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                 <p className="text-sm text-blue-900">
-                  <strong>AI-Powered:</strong> Upload your bank statement CSV and GPT-4 will
-                  automatically detect all recurring subscriptions with confidence scores.
+                  <strong>AI-Powered:</strong> Upload your bank statement (CSV, Excel, or PDF) and
+                  GPT-4 will automatically classify all transactions. Supports Russian bank statements
+                  (Т-Банк, Сбербанк, ВТБ, etc.).
                 </p>
               </div>
 
@@ -592,7 +653,11 @@ export default function UploadPage() {
                   className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
                   disabled={!csvFile || isUploading}
                 >
-                  {isUploading ? 'Processing...' : 'Upload & Parse CSV'}
+                  {isUploading
+                    ? 'Processing...'
+                    : csvFile && isPdfFile(csvFile.name)
+                      ? 'Upload & Parse PDF'
+                      : 'Upload & Parse CSV'}
                 </button>
               </div>
             </div>
