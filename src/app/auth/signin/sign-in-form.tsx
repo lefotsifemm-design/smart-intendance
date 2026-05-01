@@ -126,10 +126,27 @@ export default function SignInForm({ callbackUrl, error }: Props) {
               <GoogleIcon />
               Войти через Google
             </button>
+
+            {/* Yandex */}
+            <button
+              onClick={() => signIn('yandex', { callbackUrl })}
+              className="w-full flex items-center justify-center gap-3 px-6 py-3 bg-[#ffcc00] border-2 border-[#ffcc00] rounded-lg hover:bg-[#f5c400] hover:border-[#e6b800] transition font-semibold text-gray-900 text-sm shadow-sm"
+            >
+              <YandexIcon />
+              Войти через Яндекс
+            </button>
           </div>
         )}
       </div>
     </div>
+  )
+}
+
+function YandexIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M13.32 24h-2.64v-9.27L6.38 4.5h2.86l3.08 7.7h.07l3.07-7.7h2.68l-4.72 10.23V24z" fill="#000"/>
+    </svg>
   )
 }
 

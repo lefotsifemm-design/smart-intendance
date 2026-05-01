@@ -1,5 +1,6 @@
 import NextAuth from "next-auth"
 import Google from "next-auth/providers/google"
+import Yandex from "next-auth/providers/yandex"
 import Credentials from "next-auth/providers/credentials"
 import { createClient } from "@supabase/supabase-js"
 
@@ -16,6 +17,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     Google({
       clientId: process.env.AUTH_GOOGLE_ID,
       clientSecret: process.env.AUTH_GOOGLE_SECRET,
+    }),
+    Yandex({
+      clientId: process.env.AUTH_YANDEX_ID,
+      clientSecret: process.env.AUTH_YANDEX_SECRET,
     }),
     Credentials({
       id: "magic-link",
