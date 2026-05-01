@@ -3,8 +3,6 @@ import { createClient } from '@supabase/supabase-js'
 import { Resend } from 'resend'
 import { randomBytes } from 'crypto'
 
-const resend = new Resend(process.env.RESEND_API_KEY)
-
 function adminSupabase() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -16,6 +14,11 @@ function adminSupabase() {
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 export async function POST(req: NextRequest) {
+  if (!process.env.RESEND_API_KEY) {
+    console.error('[magic-link] RESEND_API_KEY not set')
+    return NextResponse.json({ error: 'Email-сервис не настроен' }, { status: 500 })
+  }
+
   const body = await req.json().catch(() => ({}))
   const email = (body.email ?? '').trim().toLowerCase()
 
@@ -24,7 +27,7 @@ export async function POST(req: NextRequest) {
   }
 
   const token = randomBytes(32).toString('hex')
-  const expiresAt = new Date(Date.now() + 15 * 60 * 1000) // 15 минут
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000)
 
   const supabase = adminSupabase()
   const { error: dbError } = await supabase.from('magic_links').insert({
@@ -35,10 +38,11 @@ export async function POST(req: NextRequest) {
 
   if (dbError) {
     console.error('[magic-link] DB error:', dbError.message)
-    return NextResponse.json({ error: 'Ошибка сервера' }, { status: 500 })
+    return NextResponse.json({ error: `DB: ${dbError.message}` }, { status: 500 })
   }
 
   const verifyUrl = `${process.env.NEXTAUTH_URL}/auth/verify?token=${token}`
+  const resend = new Resend(process.env.RESEND_API_KEY)
 
   const { error: emailError } = await resend.emails.send({
     from: 'Smart Intendance <noreply@smart-intendance.ru>',
@@ -63,8 +67,8 @@ export async function POST(req: NextRequest) {
   })
 
   if (emailError) {
-    console.error('[magic-link] Resend error:', emailError)
-    return NextResponse.json({ error: 'Не удалось отправить письмо' }, { status: 500 })
+    console.error('[magic-link] Resend error:', JSON.stringify(emailError))
+    return NextResponse.json({ error: `Email: ${JSON.stringify(emailError)}` }, { status: 500 })
   }
 
   return NextResponse.json({ ok: true })

@@ -30,8 +30,10 @@ export default function SignInForm({ callbackUrl, error }: Props) {
         body: JSON.stringify({ email }),
       })
       if (!res.ok) {
-        const data = await res.json()
-        throw new Error(data.error ?? 'Ошибка сервера')
+        const text = await res.text()
+        let msg = 'Ошибка сервера'
+        try { msg = JSON.parse(text).error ?? msg } catch { /* non-JSON body */ }
+        throw new Error(msg)
       }
       setStatus('sent')
     } catch (err) {
