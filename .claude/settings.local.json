@@ -10,7 +10,8 @@
       "Bash(npx next *)",
       "mcp__Claude_in_Chrome__tabs_context_mcp",
       "mcp__scheduled-tasks__create_scheduled_task",
-      "Bash(npx vitest *)"
+      "Bash(npx vitest *)",
+      "Bash(xargs ls *)"
     ]
   }
 }
