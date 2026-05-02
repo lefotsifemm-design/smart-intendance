@@ -8,7 +8,7 @@ import { useCurrency } from '@/hooks/use-currency';
 import {
   TrendingUp, TrendingDown, DollarSign, FileText,
   Upload, ArrowUpRight, ArrowDownRight, Trash2, Eraser,
-  Zap, Target, Activity,
+  Zap, Target, Activity, Pencil,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -37,6 +37,19 @@ const EXPENSE_COLORS = [
 ];
 const STACK_COLORS = ['#ef4444', '#f97316', '#f59e0b', '#8b5cf6', '#06b6d4'];
 const DAY_NAMES = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+
+const EXPENSE_CATEGORIES = [
+  'Payroll', 'Rent', 'Utilities', 'Marketing', 'IT & Software', 'Logistics',
+  'Taxes', 'Insurance', 'Legal', 'Bank Fees', 'Office Supplies', 'Travel',
+  'Meals', 'Groceries', 'Transfer Out', 'Other Expense',
+  'Entertainment', 'Software', 'Music', 'Cloud Storage', 'Productivity',
+  'Design', 'Education', 'News', 'Fitness', 'Food & Delivery',
+  'Transportation', 'Gaming', 'Other',
+];
+
+const INCOME_CATEGORIES = [
+  'Revenue', 'Payroll In', 'Refunds Received', 'Transfers In', 'Cashback', 'Other Income',
+];
 
 type Preset = 'all' | 'this_month' | 'last_month' | '3m' | '6m' | 'custom';
 
@@ -100,6 +113,8 @@ export default function StatementsPage() {
   const [clearingAll, setClearingAll] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [drillCategory, setDrillCategory] = useState<string | null>(null);
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [updatingCategoryId, setUpdatingCategoryId] = useState<string | null>(null);
 
   useEffect(() => {
     if (session?.user?.id) loadTransactions();
@@ -314,6 +329,25 @@ export default function StatementsPage() {
       toast.error('Failed to clear transactions');
     } finally {
       setClearingAll(false);
+    }
+  };
+
+  const handleUpdateCategory = async (id: string, category: string) => {
+    setUpdatingCategoryId(id);
+    try {
+      const res = await fetch('/api/update-transaction', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, category }),
+      });
+      if (!res.ok) throw new Error();
+      setTransactions((prev) => prev.map((t) => t.id === id ? { ...t, category } : t));
+      toast.success('Category updated');
+    } catch {
+      toast.error('Failed to update category');
+    } finally {
+      setUpdatingCategoryId(null);
+      setEditingCategoryId(null);
     }
   };
 
@@ -807,16 +841,40 @@ export default function StatementsPage() {
                       {t.description || t.counterparty || '—'}
                     </p>
                     <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => setDrillCategory((prev) => (prev === t.category ? null : t.category))}
-                        className={`inline-block px-1.5 py-0.5 text-xs rounded font-medium cursor-pointer transition ${
-                          t.type === 'income'
-                            ? 'bg-green-50 text-green-700 hover:bg-green-100'
-                            : 'bg-red-50 text-red-700 hover:bg-red-100'
-                        }`}
-                      >
-                        {t.category || 'Other'}
-                      </button>
+                      {editingCategoryId === t.id ? (
+                        <select
+                          autoFocus
+                          defaultValue={t.category || ''}
+                          disabled={updatingCategoryId === t.id}
+                          onChange={(e) => handleUpdateCategory(t.id, e.target.value)}
+                          onBlur={() => setEditingCategoryId(null)}
+                          className="text-xs border border-blue-400 rounded px-1.5 py-0.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                        >
+                          {(t.type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES).map((c) => (
+                            <option key={c} value={c}>{c}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => setDrillCategory((prev) => (prev === t.category ? null : t.category))}
+                            className={`inline-block px-1.5 py-0.5 text-xs rounded font-medium cursor-pointer transition ${
+                              t.type === 'income'
+                                ? 'bg-green-50 text-green-700 hover:bg-green-100'
+                                : 'bg-red-50 text-red-700 hover:bg-red-100'
+                            }`}
+                          >
+                            {t.category || 'Other'}
+                          </button>
+                          <button
+                            onClick={() => setEditingCategoryId(t.id)}
+                            className="opacity-0 group-hover:opacity-100 transition p-0.5 rounded text-gray-300 hover:text-blue-500 hover:bg-blue-50"
+                            title="Edit category"
+                          >
+                            <Pencil className="w-3 h-3" />
+                          </button>
+                        </div>
+                      )}
                       {t.date && (
                         <span className="text-xs text-gray-400">
                           {new Date(t.date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}

@@ -3,15 +3,14 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, Upload, BarChart3, Settings, Menu, X, LineChart, Target, CalendarDays } from 'lucide-react';
+import { LayoutDashboard, Upload, LineChart, Target, Settings, Menu, X, Building2, TrendingUp } from 'lucide-react';
 
 const NAV = [
-  { href: '/dashboard', icon: Home, label: 'Overview' },
+  { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { href: '/dashboard/upload', icon: Upload, label: 'Upload' },
-  { href: '/dashboard/analytics', icon: BarChart3, label: 'Analytics' },
-  { href: '/dashboard/statements', icon: LineChart, label: 'Statements' },
+  { href: '/dashboard/statements', icon: LineChart, label: 'Transactions' },
+  { href: '/dashboard/cashflow', icon: TrendingUp, label: 'Cash Flow' },
   { href: '/dashboard/budgets', icon: Target, label: 'Budgets' },
-  { href: '/dashboard/calendar', icon: CalendarDays, label: 'Calendar' },
   { href: '/dashboard/settings', icon: Settings, label: 'Settings' },
 ];
 
@@ -41,7 +40,7 @@ export default function Sidebar() {
 
   return (
     <>
-      {/* Mobile hamburger button */}
+      {/* Mobile hamburger */}
       <button
         className="lg:hidden fixed top-4 left-4 z-50 p-2 bg-white rounded-lg border border-gray-200 shadow-sm"
         onClick={() => setOpen(true)}
@@ -50,24 +49,17 @@ export default function Sidebar() {
         <Menu className="w-5 h-5 text-gray-700" />
       </button>
 
-      {/* Mobile drawer overlay */}
+      {/* Mobile overlay */}
       {open && (
-        <div
-          className="lg:hidden fixed inset-0 bg-black/40 z-40"
-          onClick={() => setOpen(false)}
-        />
+        <div className="lg:hidden fixed inset-0 bg-black/40 z-40" onClick={() => setOpen(false)} />
       )}
 
       {/* Mobile drawer */}
-      <aside
-        className={`lg:hidden fixed top-0 left-0 h-full w-64 bg-white border-r border-gray-200 z-50 transition-transform duration-200 ${
-          open ? 'translate-x-0' : '-translate-x-full'
-        }`}
-      >
+      <aside className={`lg:hidden fixed top-0 left-0 h-full w-64 bg-white border-r border-gray-200 z-50 transition-transform duration-200 ${open ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="flex items-center justify-between p-4 border-b border-gray-200">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 bg-blue-600 rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-xs">SI</span>
+              <Building2 className="w-4 h-4 text-white" />
             </div>
             <span className="font-bold text-gray-900">Smart Intendance</span>
           </div>
