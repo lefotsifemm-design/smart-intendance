@@ -1,4 +1,5 @@
-export const TBANK_API_BASE = 'https://business.tinkoff.ru/openapi';
+export const TBANK_API_BASE =
+  process.env.TBANK_API_BASE_URL ?? 'https://business.tinkoff.ru/openapi';
 
 function token(): string {
   const t = process.env.TBANK_API_TOKEN;
