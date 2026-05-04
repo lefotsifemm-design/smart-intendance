@@ -15,24 +15,24 @@ export async function GET() {
     return NextResponse.json({ connected: false }, { status: 401 });
   }
 
+  const configured = !!process.env.TBANK_API_TOKEN;
+  if (!configured) {
+    return NextResponse.json({ connected: false, reason: 'token_not_configured' });
+  }
+
   const supabase = adminClient();
   const { data } = await supabase
     .from('tbank_connections')
-    .select('account_number, company_name, inn, connected_at, last_sync_at, expires_at')
+    .select('account_number, company_name, inn, connected_at, last_sync_at')
     .eq('user_id', session.user.id)
     .single();
 
-  if (!data) return NextResponse.json({ connected: false });
-
-  const isExpired = data.expires_at ? new Date(data.expires_at) < new Date() : false;
-
   return NextResponse.json({
-    connected:      true,
-    expired:        isExpired,
-    accountNumber:  data.account_number,
-    companyName:    data.company_name,
-    inn:            data.inn,
-    connectedAt:    data.connected_at,
-    lastSyncAt:     data.last_sync_at,
+    connected: true,
+    accountNumber: data?.account_number ?? null,
+    companyName: data?.company_name ?? null,
+    inn: data?.inn ?? null,
+    connectedAt: data?.connected_at ?? null,
+    lastSyncAt: data?.last_sync_at ?? null,
   });
 }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { createClient } from '@supabase/supabase-js';
-import { getStatement, refreshAccessToken, TBankTransaction } from '@/lib/tbank';
+import { getBankAccounts, getStatement, TBankTransaction } from '@/lib/tbank';
 import OpenAI from 'openai';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -13,8 +13,6 @@ const adminClient = () =>
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
 
-// ── AI categorisation ───────────────────────────────────────────────────────
-
 interface CategorisedTx {
   operationId: string;
   category: string;
@@ -24,11 +22,11 @@ async function categorise(txs: TBankTransaction[]): Promise<CategorisedTx[]> {
   if (txs.length === 0) return [];
 
   const list = txs.map((t) => ({
-    id:          t.operationId ?? t.id,
-    type:        t.type === 'Credit' ? 'income' : 'expense',
+    id: t.operationId ?? t.id,
+    type: t.type === 'Credit' ? 'income' : 'expense',
     description: t.description,
     counterParty: t.counterParty?.name ?? '',
-    amount:      Math.abs(t.amount.value),
+    amount: Math.abs(t.amount.value),
   }));
 
   const prompt = `Classify each transaction into ONE business category and return ONLY a JSON array.
@@ -43,10 +41,10 @@ Return format (JSON array, no markdown):
 [{"operationId":"...","category":"..."}]`;
 
   const res = await openai.chat.completions.create({
-    model:      'gpt-4o-mini',   // fast + cheap for classification only
-    messages:   [{ role: 'user', content: prompt }],
+    model: 'gpt-4o-mini',
+    messages: [{ role: 'user', content: prompt }],
     temperature: 0,
-    max_tokens:  list.length * 30 + 200,
+    max_tokens: list.length * 30 + 200,
   });
 
   const raw = (res.choices[0].message.content ?? '[]')
@@ -58,75 +56,68 @@ Return format (JSON array, no markdown):
   }
 }
 
-// ── Main handler ────────────────────────────────────────────────────────────
-
 export async function POST(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  if (!process.env.TBANK_API_TOKEN) {
+    return NextResponse.json({ error: 'TBANK_API_TOKEN not configured' }, { status: 500 });
+  }
+
   const supabase = adminClient();
 
-  // Load connection record
-  const { data: conn, error: connErr } = await supabase
+  // Get or resolve account number
+  const { data: conn } = await supabase
     .from('tbank_connections')
-    .select('*')
+    .select('account_number, last_sync_at')
     .eq('user_id', session.user.id)
     .single();
 
-  if (connErr || !conn) {
-    return NextResponse.json({ error: 'T-Bank not connected' }, { status: 400 });
-  }
+  let accountNumber: string | null = conn?.account_number ?? null;
 
-  // Refresh token if expired
-  let accessToken: string = conn.access_token;
-  if (conn.expires_at && new Date(conn.expires_at) < new Date()) {
-    if (!conn.refresh_token) {
-      return NextResponse.json({ error: 'Token expired and no refresh token. Please reconnect.' }, { status: 401 });
-    }
+  // Auto-discover account number if not stored
+  if (!accountNumber) {
     try {
-      const refreshed = await refreshAccessToken(conn.refresh_token);
-      accessToken = refreshed.access_token;
-      const expiresAt = refreshed.expires_in
-        ? new Date(Date.now() + refreshed.expires_in * 1000).toISOString()
-        : null;
+      const accounts = await getBankAccounts();
+      if (accounts.length === 0) {
+        return NextResponse.json({ error: 'No bank accounts found' }, { status: 400 });
+      }
+      accountNumber = accounts[0].accountNumber;
       await supabase
         .from('tbank_connections')
-        .update({
-          access_token:  accessToken,
-          refresh_token: refreshed.refresh_token ?? conn.refresh_token,
-          expires_at:    expiresAt,
-        })
-        .eq('user_id', session.user.id);
-    } catch {
-      return NextResponse.json({ error: 'Token refresh failed. Please reconnect T-Bank.' }, { status: 401 });
+        .upsert({
+          user_id: session.user.id,
+          account_number: accountNumber,
+          company_name: accounts[0].name ?? null,
+          connected_at: new Date().toISOString(),
+        }, { onConflict: 'user_id' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'failed to fetch accounts';
+      return NextResponse.json({ error: msg }, { status: 502 });
     }
   }
 
-  // Determine date range: from last sync (or 90 days ago) to now
+  // Determine date range
   const body = await request.json().catch(() => ({}));
   const till = new Date();
   let from: Date;
 
   if (body.from) {
     from = new Date(body.from);
-  } else if (conn.last_sync_at) {
+  } else if (conn?.last_sync_at) {
     from = new Date(conn.last_sync_at);
-    from.setDate(from.getDate() - 1); // 1-day overlap to catch late-posting txs
+    from.setDate(from.getDate() - 1);
   } else {
     from = new Date();
-    from.setDate(from.getDate() - 90); // first sync: last 90 days
-  }
-
-  if (!conn.account_number) {
-    return NextResponse.json({ error: 'No account number stored. Disconnect and reconnect T-Bank.' }, { status: 400 });
+    from.setDate(from.getDate() - 90);
   }
 
   // Fetch from T-Bank
   let rawTxs: TBankTransaction[];
   try {
-    rawTxs = await getStatement(accessToken, conn.account_number, from, till);
+    rawTxs = await getStatement(accountNumber, from, till);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'statement fetch failed';
     return NextResponse.json({ error: msg }, { status: 502 });
@@ -140,7 +131,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ synced: 0, skipped: 0, message: 'No new transactions' });
   }
 
-  // Deduplicate against already-saved transactions (by counterparty + date + amount)
+  // Deduplicate
   const { data: existingIds } = await supabase
     .from('transactions')
     .select('description, date, amount')
@@ -155,9 +146,8 @@ export async function POST(request: NextRequest) {
 
   const newTxs = rawTxs.filter((t) => {
     const dateStr = t.date.slice(0, 10);
-    const amount  = Math.abs(t.amount.value);
-    const key     = `${t.description}|${dateStr}|${amount}`;
-    return !existingSet.has(key);
+    const amount = Math.abs(t.amount.value);
+    return !existingSet.has(`${t.description}|${dateStr}|${amount}`);
   });
 
   if (newTxs.length === 0) {
@@ -172,35 +162,33 @@ export async function POST(request: NextRequest) {
   const categories = await categorise(newTxs);
   const categoryMap = new Map(categories.map((c) => [c.operationId, c.category]));
 
-  // Map to our transaction schema
   const rows = newTxs.map((t) => {
-    const opId    = t.operationId ?? t.id;
+    const opId = t.operationId ?? t.id;
     const isIncome = t.type === 'Credit';
     return {
-      user_id:      session.user!.id,
-      type:         isIncome ? 'income' : 'expense',
-      category:     categoryMap.get(opId) ?? (isIncome ? 'Other Income' : 'Other Expense'),
-      amount:       Math.abs(t.amount.value),
-      date:         t.date.slice(0, 10),
-      description:  t.description,
+      user_id: session.user!.id,
+      type: isIncome ? 'income' : 'expense',
+      category: categoryMap.get(opId) ?? (isIncome ? 'Other Income' : 'Other Expense'),
+      amount: Math.abs(t.amount.value),
+      date: t.date.slice(0, 10),
+      description: t.description,
       counterparty: t.counterParty?.name ?? null,
-      source:       'tbank',
+      source: 'tbank',
     };
   });
 
   const { error: insertErr } = await supabase.from('transactions').insert(rows);
   if (insertErr) return NextResponse.json({ error: insertErr.message }, { status: 500 });
 
-  // Update last_sync timestamp
   await supabase
     .from('tbank_connections')
     .update({ last_sync_at: till.toISOString() })
     .eq('user_id', session.user.id);
 
   return NextResponse.json({
-    synced:  rows.length,
+    synced: rows.length,
     skipped: rawTxs.length - newTxs.length,
-    from:    from.toISOString().slice(0, 10),
-    till:    till.toISOString().slice(0, 10),
+    from: from.toISOString().slice(0, 10),
+    till: till.toISOString().slice(0, 10),
   });
 }
