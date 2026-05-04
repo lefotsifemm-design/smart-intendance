@@ -33,7 +33,7 @@ export default async function DashboardLayout({
                 <Link href="/dashboard/upload" className="text-gray-600 hover:text-gray-900 transition text-sm">
                   Upload
                 </Link>
-                <Link href="/dashboard/analytics" className="text-gray-600 hover:text-gray-900 transition text-sm">
+                <Link href="/dashboard/statements" className="text-gray-600 hover:text-gray-900 transition text-sm">
                   Analytics
                 </Link>
                 <Link href="/dashboard/budgets" className="text-gray-600 hover:text-gray-900 transition text-sm">
