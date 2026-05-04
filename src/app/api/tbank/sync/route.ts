@@ -22,11 +22,11 @@ async function categorise(txs: TBankTransaction[]): Promise<CategorisedTx[]> {
   if (txs.length === 0) return [];
 
   const list = txs.map((t) => ({
-    id: t.operationId ?? t.id,
-    type: t.type === 'Credit' ? 'income' : 'expense',
+    id: t.operationId,
+    type: t.typeOfOperation === 'Credit' ? 'income' : 'expense',
     description: t.description,
     counterParty: t.counterParty?.name ?? '',
-    amount: Math.abs(t.amount.value),
+    amount: Math.abs(t.operationAmount),
   }));
 
   const prompt = `Classify each transaction into ONE business category and return ONLY a JSON array.
@@ -145,8 +145,8 @@ export async function POST(request: NextRequest) {
   );
 
   const newTxs = rawTxs.filter((t) => {
-    const dateStr = t.date.slice(0, 10);
-    const amount = Math.abs(t.amount.value);
+    const dateStr = t.operationDate.slice(0, 10);
+    const amount = Math.abs(t.operationAmount);
     return !existingSet.has(`${t.description}|${dateStr}|${amount}`);
   });
 
@@ -163,14 +163,13 @@ export async function POST(request: NextRequest) {
   const categoryMap = new Map(categories.map((c) => [c.operationId, c.category]));
 
   const rows = newTxs.map((t) => {
-    const opId = t.operationId ?? t.id;
-    const isIncome = t.type === 'Credit';
+    const isIncome = t.typeOfOperation === 'Credit';
     return {
       user_id: session.user!.id,
       type: isIncome ? 'income' : 'expense',
-      category: categoryMap.get(opId) ?? (isIncome ? 'Other Income' : 'Other Expense'),
-      amount: Math.abs(t.amount.value),
-      date: t.date.slice(0, 10),
+      category: categoryMap.get(t.operationId) ?? (isIncome ? 'Other Income' : 'Other Expense'),
+      amount: Math.abs(t.operationAmount),
+      date: t.operationDate.slice(0, 10),
       description: t.description,
       counterparty: t.counterParty?.name ?? null,
       source: 'tbank',

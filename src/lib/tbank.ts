@@ -35,14 +35,14 @@ export async function getBankAccounts(): Promise<TBankAccount[]> {
 }
 
 export interface TBankTransaction {
-  id: string;
-  date: string;
+  operationId: string;
+  operationDate: string;
   description: string;
-  amount: { value: number; currency: { name: string } };
-  type: 'Credit' | 'Debit';
-  counterParty?: { inn?: string; name?: string; kpp?: string };
-  category?: { id?: string; name?: string };
-  operationId?: string;
+  payPurpose?: string;
+  operationAmount: number;
+  typeOfOperation: 'Credit' | 'Debit';
+  counterParty?: { inn?: string; name?: string; kpp?: string; account?: string };
+  category?: string;
 }
 
 export async function getStatement(
@@ -65,5 +65,5 @@ export async function getStatement(
     throw new Error(`Statement fetch failed: ${res.status} ${body}`);
   }
   const data = await res.json();
-  return Array.isArray(data) ? data : (data.payload ?? []);
+  return Array.isArray(data) ? data : (data.operations ?? data.payload ?? []);
 }
