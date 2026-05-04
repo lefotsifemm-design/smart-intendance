@@ -3,13 +3,15 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Upload, LineChart, Target, Settings, Menu, X, Building2, TrendingUp } from 'lucide-react';
+import { LayoutDashboard, Upload, LineChart, Target, Settings, Menu, X, Building2, TrendingUp, ShieldAlert, Siren } from 'lucide-react';
 
 const NAV = [
   { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { href: '/dashboard/upload', icon: Upload, label: 'Upload' },
   { href: '/dashboard/statements', icon: LineChart, label: 'Transactions' },
   { href: '/dashboard/cashflow', icon: TrendingUp, label: 'Cash Flow' },
+  { href: '/dashboard/cashgap', icon: Siren, label: 'Cash Gap' },
+  { href: '/dashboard/anomalies', icon: ShieldAlert, label: 'Anomalies' },
   { href: '/dashboard/budgets', icon: Target, label: 'Budgets' },
   { href: '/dashboard/settings', icon: Settings, label: 'Settings' },
 ];

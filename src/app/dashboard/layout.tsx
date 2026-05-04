@@ -36,6 +36,12 @@ export default async function DashboardLayout({
                 <Link href="/dashboard/statements" className="text-gray-600 hover:text-gray-900 transition text-sm">
                   Analytics
                 </Link>
+                <Link href="/dashboard/cashgap" className="text-gray-600 hover:text-gray-900 transition text-sm">
+                  Cash Gap
+                </Link>
+                <Link href="/dashboard/anomalies" className="text-gray-600 hover:text-gray-900 transition text-sm">
+                  Anomalies
+                </Link>
                 <Link href="/dashboard/budgets" className="text-gray-600 hover:text-gray-900 transition text-sm">
                   Budgets
                 </Link>

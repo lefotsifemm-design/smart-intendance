@@ -4,56 +4,54 @@
 
 ---
 
-## Что сделано в этой сессии
+## Статус T-Bank интеграции: ✅ РАБОТАЕТ
 
-### T-Bank интеграция переписана с OAuth на статический токен
+Синхронизация с T-Bank Business API полностью завершена и протестирована. Транзакции тянутся, категоризируются через GPT-4o-mini, сохраняются в Supabase.
 
-**Старая архитектура (OAuth):** CLIENT_ID + CLIENT_SECRET → redirect → callback → access_token + refresh_token в БД  
-**Новая архитектура (статический токен):** `TBANK_API_TOKEN` в env → Bearer в каждом запросе
+### Что было сделано в этой сессии
 
-**Изменённые файлы:**
-- `src/lib/tbank.ts` — убраны buildAuthUrl, exchangeCode, refreshAccessToken. Токен берётся из `TBANK_API_TOKEN` env var
-- `src/app/api/tbank/sync/route.ts` — убрана логика refresh токена, при первом синке автоматически обнаруживает номер счёта через getBankAccounts()
-- `src/app/api/tbank/status/route.ts` — проверяет наличие TBANK_API_TOKEN, возвращает статус + данные из tbank_connections
-- `src/app/api/tbank/auth/route.ts` — заглушка 410 (OAuth не нужен)
-- `src/app/api/tbank/callback/route.ts` — заглушка 410 (OAuth не нужен)
-- `src/app/dashboard/settings/page.tsx` — убрана OAuth кнопка, убран expired-токен UI, упрощён до кнопки Синхронизировать
+| Проблема | Решение |
+|---|---|
+| Vercel шлёт запросы напрямую, T-Bank блокирует по IP | `TBANK_API_BASE_URL=http://72.56.122.221:8081/openapi` в Vercel |
+| Env var содержала имя переменной вместо значения | Исправлено в Vercel — только значение без `KEY=` |
+| Порт 8081 заблокирован облачным фаерволом Timeweb | Добавлено правило TCP 8081 в группу **Wild Sagittarius** |
+| Навигация вела на несуществующий `/dashboard/analytics` | Исправлено на `/dashboard/statements` в `layout.tsx` |
+| T-Bank API ожидает `to`, а не `till` | Исправлено в `src/lib/tbank.ts` |
+| T-Bank возвращает `{ operations: [...] }`, а не `{ payload: [...] }` | Исправлено в `getStatement` и маппинге `sync/route.ts` |
+| Поля ответа: `operationId`, `operationDate`, `operationAmount`, `typeOfOperation` | Обновлены интерфейс `TBankTransaction` и весь маппинг |
 
-### VPS nginx прокси настроен
+### Итоговая архитектура прокси
 
-На сервере Timeweb (IP: **72.56.122.221**) настроен nginx reverse proxy на порту **8081**:
-- Конфиг: `/etc/nginx/sites-available/tbank-proxy`
-- Проксирует на `https://business.tinkoff.ru`
-- Проверено: `curl -I http://72.56.122.221:8081` возвращает 307 от T-Bank
+```
+Vercel (dynamic IP)
+  → HTTP POST http://72.56.122.221:8081/openapi/api/v1/statement
+  → nginx на VPS (порт 8081, /etc/nginx/sites-available/tbank-proxy)
+  → HTTPS https://business.tinkoff.ru/openapi/api/v1/statement
+  → T-Bank видит IP 72.56.122.221 ✅
+```
 
-### Токен T-Bank выпущен
+### Структура ответа T-Bank (реальная)
 
-- Выпущен в T-Bank Business → Все сервисы → T-API → Выпуск токена
-- Добавлен в Vercel и `.env.local` как `TBANK_API_TOKEN`
-- Скоупы: Счета и выписки (информация об операциях, информация о счетах, информация о транзакциях и авторизациях)
-- IP в T-Bank: `72.56.122.221`
-
----
-
-## Текущая проблема: `/api/tbank/sync` возвращает 502
-
-**Симптом:** Settings страница показывает "Подключено" (токен есть), но кнопка "Синхронизировать" даёт 502.
-
-**Вероятная причина:** Vercel делает запросы к `https://business.tinkoff.ru/openapi` напрямую со своих динамических IP, а T-Bank разрешает запросы только с `72.56.122.221`. Nginx прокси настроен на VPS, но код приложения его не использует — `TBANK_API_BASE` в `src/lib/tbank.ts` жёстко прописан как `https://business.tinkoff.ru/openapi`.
-
-**Что нужно выяснить в следующей сессии:**
-
-1. **Проверить реальный ответ T-Bank** — добавить логирование в `/api/tbank/sync`, посмотреть точный текст ошибки (не просто 502, а что пишет T-Bank)
-2. **Вариант А — роутить через VPS прокси:**
-   - Добавить `TBANK_API_BASE_URL=http://72.56.122.221:8081` в Vercel env
-   - В `src/lib/tbank.ts` использовать `process.env.TBANK_API_BASE_URL ?? TBANK_API_BASE`
-   - Убедиться что nginx на VPS правильно форвардит заголовок Authorization
-3. **Вариант Б — проверить, возможно T-Bank не требует IP whitelist для read-only токена** — попробовать запрос напрямую без прокси через curl с произвольного IP
-4. **Проверить точный URL эндпоинта** — T-Bank может отдавать счета по другому пути (документация: business.tinkoff.ru/openapi/docs)
+```json
+{
+  "operations": [
+    {
+      "operationId": "uuid",
+      "operationDate": "2026-04-13T11:51:18Z",
+      "operationAmount": 128000,
+      "typeOfOperation": "Credit",
+      "description": "Взнос финансовой помощи от учредителя",
+      "payPurpose": "...",
+      "counterParty": { "name": "...", "inn": "...", "kpp": "..." },
+      "category": "incomePeople"
+    }
+  ]
+}
+```
 
 ---
 
-## Env vars (все добавлены в Vercel и .env.local)
+## Env vars (Vercel + .env.local)
 
 ```
 NEXT_PUBLIC_SUPABASE_URL
@@ -65,31 +63,90 @@ NEXTAUTH_SECRET
 AUTH_GOOGLE_ID
 AUTH_GOOGLE_SECRET
 RESEND_API_KEY
-TBANK_API_TOKEN        ← новый, добавлен сегодня
+TBANK_API_TOKEN               ← Bearer токен из T-Bank Business → T-API
+TBANK_API_BASE_URL=http://72.56.122.221:8081/openapi  ← только в Vercel, не в .env.local
 ```
 
-## Supabase — что нужно запустить
-
-| SQL файл | Статус |
-|---|---|
-| `supabase/budgets.sql` | ⚠️ подтвердить |
-| `supabase/tbank_connections.sql` | ⚠️ подтвердить |
-
-Таблица `tbank_connections` хранит: user_id, account_number, company_name, inn, connected_at, last_sync_at (без токенов — они теперь в env).
+> `.env.local` не содержит `TBANK_API_BASE_URL` — локально код использует дефолт `https://business.tinkoff.ru/openapi` напрямую.
 
 ---
 
-## VPS (Timeweb)
+## VPS (Timeweb Cloud)
 
-- IP: `72.56.122.221`
+- Сервер: **Mysterious Linnet**, IP: `72.56.122.221`
 - SSH: `ssh root@72.56.122.221`
-- Nginx прокси: `/etc/nginx/sites-available/tbank-proxy` (порт 8081)
-- На сервере также крутится WireGuard VPN (wg-easy в Docker, `/opt/wg-easy/`)
+- Nginx прокси: `/etc/nginx/sites-available/tbank-proxy` (порт 8081 → business.tinkoff.ru)
+- Фаерволы: **Wild Sagittarius** (порты 22, 8000, 8081, 51821 TCP, 51820 UDP) + **Nimble Hoopoe** (443, 22, 80)
+- Также: WireGuard VPN (wg-easy, `/opt/wg-easy/`)
 
 ---
 
-## Следующие приоритеты после фикса синка
+## Известная проблема: изоляция по пользователям
 
-1. Проверить синк работает → транзакции появляются в таблице
-2. Dashboard отображает данные из T-Bank (а не только из загруженных выписок)
-3. Автосинк по расписанию (cron или webhook от T-Bank)
+`TBANK_API_TOKEN` — серверная переменная, общая для всего приложения. Любой залогиненный пользователь видит "T-Bank connected" и может синкнуть чужие финансовые данные.
+
+**Быстрый фикс (не сделан):** добавить `ALLOWED_EMAILS` env var и проверять в sync/status роутах.
+
+---
+
+## Следующий приоритет: Предиктивный кассовый разрыв
+
+### Концепция
+
+На основе исторических данных AI строит прогноз Cash Flow на месяц вперёд. Если система видит, что в конкретную дату денег на счету не хватит — бьёт тревогу заранее.
+
+### Флоу
+
+```
+Исторические транзакции (90+ дней из T-Bank/загруженных выписок)
+  ↓
+GPT-4o анализирует:
+  - Регулярные расходы (ФОТ, аренда, налоги, подписки) → даты + суммы
+  - Дебиторку: средний срок оплаты счетов клиентами → вероятная дата поступления
+  - Сезонность: паттерны по дням недели / числам месяца
+  ↓
+Прогноз: ежедневный баланс на 30 дней вперёд
+  ↓
+Детектор разрывов: дни где прогнозный баланс < 0 (или < порога)
+  ↓
+Алерты: карточки "⚠️ 15 мая — возможный кассовый разрыв: −₽47 000"
+  + объяснение причины (ФОТ + налог) и рекомендация (ускорить сбор дебиторки)
+```
+
+### Компоненты для реализации
+
+| Компонент | Что делает |
+|---|---|
+| `/api/cashgap` | GET `?balance=N` → AI-анализ + прогноз + список разрывов |
+| `CashGapDetector` | Серверная функция: анализирует паттерны, строит daily balance array |
+| `/dashboard/cashgap` | Страница: график баланса, таблица алертов, список паттернов |
+| `GapAlertBanner` | Компонент на Dashboard: показывает ближайший риск если он есть |
+
+### Данные для анализа
+
+- `transactions` таблица: source `tbank` + `upload` — всё что есть
+- Пользователь вводит текущий баланс (или берём из T-Bank `balance.otb`)
+- Опционально: пользователь указывает ожидаемые поступления вручную
+
+### AI-промпт (концепт)
+
+```
+Ты CFO-аналитик. На основе транзакций за последние N дней:
+1. Найди регулярные расходы (ФОТ, аренда, налоги) — дата в месяце + сумма
+2. Найди паттерны поступлений — средний день поступления + средняя сумма
+3. Построй прогноз ежедневного баланса на 30 дней начиная с [currentBalance]
+4. Отметь дни где баланс падает ниже [threshold] — это кассовые разрывы
+5. Для каждого разрыва: причина + рекомендация
+Верни JSON: { dailyForecast: [{date, balance, events}], gaps: [{date, amount, reason, recommendation}] }
+```
+
+### Отличие от текущего Cash Flow
+
+| Текущий Cash Flow | Предиктивный кассовый разрыв |
+|---|---|
+| Паттерны + 30-дневный прогноз баланса | То же, но фокус на конкретных датах риска |
+| Нет алертов | Алерты с причиной и рекомендацией |
+| Пользователь вводит баланс вручную | Баланс из T-Bank API автоматически |
+| Нет дебиторки | Моделирует ожидаемые поступления по истории |
+
+> Вероятно, имеет смысл расширить существующий `/api/cashflow` и страницу Cash Flow, а не создавать отдельный роут — добавить режим "разрывы" как отдельную секцию.
