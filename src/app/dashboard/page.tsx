@@ -91,11 +91,19 @@ export default function DashboardPage() {
     setSyncing(true);
     try {
       const res = await fetch('/api/tbank/sync', { method: 'POST' });
-      if (!res.ok) throw new Error();
-      toast.success('Sync complete');
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(`Sync failed: ${json.error ?? res.status}`);
+        return;
+      }
+      if (json.synced > 0) {
+        toast.success(`Синхронизировано ${json.synced} транзакций`);
+      } else {
+        toast.success(json.message ?? 'Нет новых транзакций');
+      }
       loadAll();
     } catch {
-      toast.error('Sync failed');
+      toast.error('Sync failed: network error');
     } finally {
       setSyncing(false);
     }
