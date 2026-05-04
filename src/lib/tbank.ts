@@ -26,7 +26,10 @@ export async function getBankAccounts(): Promise<TBankAccount[]> {
   const res = await fetch(`${TBANK_API_BASE}/api/v1/bank-accounts`, {
     headers: authHeaders(),
   });
-  if (!res.ok) throw new Error(`Get accounts failed: ${res.status}`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Get accounts failed: ${res.status} ${body}`);
+  }
   const data = await res.json();
   return Array.isArray(data) ? data : (data.payload ?? []);
 }
@@ -57,7 +60,10 @@ export async function getStatement(
     headers: authHeaders(),
   });
 
-  if (!res.ok) throw new Error(`Statement fetch failed: ${res.status}`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Statement fetch failed: ${res.status} ${body}`);
+  }
   const data = await res.json();
   return Array.isArray(data) ? data : (data.payload ?? []);
 }
