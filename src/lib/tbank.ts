@@ -1,5 +1,8 @@
-export const TBANK_API_BASE =
-  process.env.TBANK_API_BASE_URL ?? 'https://business.tinkoff.ru/openapi';
+const _rawBase = (process.env.TBANK_API_BASE_URL ?? 'https://business.tinkoff.ru/openapi').trim();
+try { new URL(_rawBase); } catch {
+  throw new Error(`TBANK_API_BASE_URL is not a valid URL: "${_rawBase}"`);
+}
+export const TBANK_API_BASE = _rawBase;
 
 function token(): string {
   const t = process.env.TBANK_API_TOKEN;
