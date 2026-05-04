@@ -53,7 +53,7 @@ export async function getStatement(
   const params = new URLSearchParams({
     accountNumber,
     from: from.toISOString(),
-    till: till.toISOString(),
+    to: till.toISOString(),
   });
 
   const res = await fetch(`${TBANK_API_BASE}/api/v1/statement?${params}`, {
