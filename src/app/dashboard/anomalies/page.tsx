@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useCurrency } from '@/hooks/use-currency';
 import {
   AlertTriangle,
@@ -12,9 +12,13 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { SpendingAnomaly, DuplicateGroup, ZombieSubscription } from '@/app/api/anomalies/route';
+import type { AlertRecord } from '@/app/api/alerts/route';
+
+const STORAGE_KEY = 'si_anomaly_count';
 
 function fmt(n: number, symbol: string) {
   return `${symbol}${Math.abs(n).toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
@@ -22,6 +26,16 @@ function fmt(n: number, symbol: string) {
 
 function shortDate(d: string) {
   return new Date(d).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+}
+
+function anomalyKey(item: SpendingAnomaly) {
+  return `anomaly:${item.category}:${item.currentMonthLabel}`;
+}
+function duplicateKey(item: DuplicateGroup) {
+  return `duplicate:${item.name}:${item.monthLabel}`;
+}
+function zombieKey(item: ZombieSubscription) {
+  return `zombie:${item.name}`;
 }
 
 // ─── Severity badge ────────────────────────────────────────────────────────────
@@ -36,9 +50,26 @@ const SEVERITY_LABEL: Record<string, string> = {
   medium: 'Внимание',
 };
 
+// ─── Dismiss button ───────────────────────────────────────────────────────────
+function DismissBtn({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      title="Скрыть"
+      className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition shrink-0"
+    >
+      <X className="w-3.5 h-3.5" />
+    </button>
+  );
+}
+
 // ─── Anomaly card ─────────────────────────────────────────────────────────────
-function AnomalyCard({ item, symbol }: { item: SpendingAnomaly; symbol: string }) {
+function AnomalyCard({
+  item, symbol, dismissed, onDismiss,
+}: { item: SpendingAnomaly; symbol: string; dismissed: boolean; onDismiss: () => void }) {
   const [expanded, setExpanded] = useState(false);
+  if (dismissed) return null;
+
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
       <div
@@ -59,17 +90,15 @@ function AnomalyCard({ item, symbol }: { item: SpendingAnomaly; symbol: string }
             {SEVERITY_LABEL[item.severity]}
           </span>
           <p className="text-sm font-bold text-red-600">+{item.changePercent}%</p>
-          {expanded ? (
-            <ChevronUp className="w-4 h-4 text-gray-400" />
-          ) : (
-            <ChevronDown className="w-4 h-4 text-gray-400" />
-          )}
+          <div className="flex items-center gap-1">
+            <DismissBtn onClick={onDismiss} />
+            {expanded ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+          </div>
         </div>
       </div>
 
       {expanded && (
         <div className="border-t border-gray-100 p-5 space-y-4">
-          {/* Numbers */}
           <div className="grid grid-cols-2 gap-4">
             <div className="bg-gray-50 rounded-lg p-3">
               <p className="text-xs text-gray-400 mb-0.5">Текущий месяц</p>
@@ -81,7 +110,6 @@ function AnomalyCard({ item, symbol }: { item: SpendingAnomaly; symbol: string }
             </div>
           </div>
 
-          {/* Spike amount */}
           <div className="flex items-center gap-2 text-sm text-red-700 bg-red-50 rounded-lg px-3 py-2">
             <AlertTriangle className="w-4 h-4 shrink-0" />
             <span>
@@ -89,7 +117,6 @@ function AnomalyCard({ item, symbol }: { item: SpendingAnomaly; symbol: string }
             </span>
           </div>
 
-          {/* Top transactions */}
           {item.topTransactions.length > 0 && (
             <div>
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
@@ -117,7 +144,11 @@ function AnomalyCard({ item, symbol }: { item: SpendingAnomaly; symbol: string }
 }
 
 // ─── Duplicate card ───────────────────────────────────────────────────────────
-function DuplicateCard({ item, symbol }: { item: DuplicateGroup; symbol: string }) {
+function DuplicateCard({
+  item, symbol, dismissed, onDismiss,
+}: { item: DuplicateGroup; symbol: string; dismissed: boolean; onDismiss: () => void }) {
+  if (dismissed) return null;
+
   return (
     <div className="bg-white rounded-xl border border-orange-200 overflow-hidden">
       <div className="p-5">
@@ -131,10 +162,13 @@ function DuplicateCard({ item, symbol }: { item: DuplicateGroup; symbol: string 
               <p className="text-sm text-gray-400">{item.category} · {item.monthLabel}</p>
             </div>
           </div>
-          <div className="text-right shrink-0">
-            <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-medium">
-              {item.items.length}× оплачено
-            </span>
+          <div className="text-right shrink-0 flex flex-col items-end gap-1">
+            <div className="flex items-center gap-1">
+              <DismissBtn onClick={onDismiss} />
+              <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-medium">
+                {item.items.length}× оплачено
+              </span>
+            </div>
             {item.totalWasted > 0 && (
               <p className="text-sm font-bold text-orange-700 mt-1">
                 Лишнее: {fmt(item.totalWasted, symbol)}
@@ -160,7 +194,11 @@ function DuplicateCard({ item, symbol }: { item: DuplicateGroup; symbol: string 
 }
 
 // ─── Zombie card ──────────────────────────────────────────────────────────────
-function ZombieCard({ item, symbol }: { item: ZombieSubscription; symbol: string }) {
+function ZombieCard({
+  item, symbol, dismissed, onDismiss,
+}: { item: ZombieSubscription; symbol: string; dismissed: boolean; onDismiss: () => void }) {
+  if (dismissed) return null;
+
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5">
       <div className="flex items-start justify-between gap-4">
@@ -176,8 +214,11 @@ function ZombieCard({ item, symbol }: { item: ZombieSubscription; symbol: string
             </p>
           </div>
         </div>
-        <div className="text-right shrink-0">
-          <p className="text-lg font-bold text-gray-900">{fmt(item.amount, symbol)}<span className="text-xs font-normal text-gray-400">/мес</span></p>
+        <div className="text-right shrink-0 flex flex-col items-end gap-1">
+          <DismissBtn onClick={onDismiss} />
+          <p className="text-lg font-bold text-gray-900">
+            {fmt(item.amount, symbol)}<span className="text-xs font-normal text-gray-400">/мес</span>
+          </p>
           <p className="text-xs text-gray-400 mt-0.5">Всего: {fmt(item.totalSpent, symbol)}</p>
         </div>
       </div>
@@ -190,7 +231,8 @@ function Section({
   icon: Icon,
   title,
   subtitle,
-  count,
+  visibleCount,
+  totalCount,
   iconBg,
   iconColor,
   children,
@@ -198,11 +240,13 @@ function Section({
   icon: React.ElementType;
   title: string;
   subtitle: string;
-  count: number;
+  visibleCount: number;
+  totalCount: number;
   iconBg: string;
   iconColor: string;
   children: React.ReactNode;
 }) {
+  const hiddenCount = totalCount - visibleCount;
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-3">
@@ -211,7 +255,12 @@ function Section({
         </div>
         <div>
           <h2 className="font-semibold text-gray-900">
-            {title} {count > 0 && <span className="text-gray-400 font-normal text-sm">({count})</span>}
+            {title}{' '}
+            {totalCount > 0 && (
+              <span className="text-gray-400 font-normal text-sm">
+                ({visibleCount}{hiddenCount > 0 ? `, ${hiddenCount} скрыто` : ''})
+              </span>
+            )}
           </h2>
           <p className="text-sm text-gray-400">{subtitle}</p>
         </div>
@@ -229,6 +278,31 @@ export default function AnomaliesPage() {
   const [duplicates, setDuplicates] = useState<DuplicateGroup[]>([]);
   const [zombies, setZombies] = useState<ZombieSubscription[]>([]);
   const [insufficient, setInsufficient] = useState(false);
+  const [dismissedKeys, setDismissedKeys] = useState<Set<string>>(new Set());
+
+  // Load dismissed alerts
+  useEffect(() => {
+    fetch('/api/alerts')
+      .then((r) => r.ok ? r.json() : [])
+      .then((records: AlertRecord[]) => {
+        const keys = records
+          .filter((r) => r.alert_type === 'anomaly')
+          .map((r) => r.alert_key);
+        setDismissedKeys(new Set(keys));
+      })
+      .catch(() => {/* non-critical */});
+  }, []);
+
+  const dismiss = useCallback(async (alertKey: string) => {
+    setDismissedKeys((prev) => new Set([...prev, alertKey]));
+    try {
+      await fetch('/api/alerts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ alertType: 'anomaly', alertKey, action: 'dismiss' }),
+      });
+    } catch {/* non-critical */}
+  }, []);
 
   const load = async () => {
     setLoading(true);
@@ -240,6 +314,10 @@ export default function AnomaliesPage() {
       setDuplicates(data.duplicates);
       setZombies(data.zombies);
       setInsufficient(data.insufficient);
+
+      // Persist total count for Dashboard widget
+      const total = data.anomalies.length + data.duplicates.length + data.zombies.length;
+      try { localStorage.setItem(STORAGE_KEY, String(total)); } catch { /* ok */ }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Ошибка загрузки');
     } finally {
@@ -249,7 +327,11 @@ export default function AnomaliesPage() {
 
   useEffect(() => { load(); }, []);
 
+  const visibleAnomalies = anomalies.filter((a) => !dismissedKeys.has(anomalyKey(a)));
+  const visibleDuplicates = duplicates.filter((d) => !dismissedKeys.has(duplicateKey(d)));
+  const visibleZombies = zombies.filter((z) => !dismissedKeys.has(zombieKey(z)));
   const totalIssues = anomalies.length + duplicates.length + zombies.length;
+  const visibleTotal = visibleAnomalies.length + visibleDuplicates.length + visibleZombies.length;
 
   return (
     <div className="space-y-8 max-w-4xl">
@@ -292,13 +374,15 @@ export default function AnomaliesPage() {
         </div>
       )}
 
-      {!loading && !insufficient && totalIssues === 0 && (
+      {!loading && !insufficient && visibleTotal === 0 && (
         <div className="flex items-start gap-3 bg-green-50 border border-green-200 rounded-xl p-5">
           <CheckCircle2 className="w-5 h-5 text-green-500 shrink-0 mt-0.5" />
           <div>
             <p className="font-semibold text-green-800">Всё чисто</p>
             <p className="text-sm text-green-700 mt-0.5">
-              Аномалий, дублей и забытых подписок не обнаружено.
+              {totalIssues > 0
+                ? 'Все обнаруженные аномалии скрыты.'
+                : 'Аномалий, дублей и забытых подписок не обнаружено.'}
             </p>
           </div>
         </div>
@@ -309,17 +393,23 @@ export default function AnomaliesPage() {
           {/* Summary bar */}
           {totalIssues > 0 && (
             <div className="grid grid-cols-3 gap-4">
-              <div className={`rounded-xl border p-4 text-center ${anomalies.length > 0 ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'}`}>
-                <p className={`text-2xl font-bold ${anomalies.length > 0 ? 'text-red-700' : 'text-gray-400'}`}>{anomalies.length}</p>
-                <p className={`text-xs font-medium mt-1 ${anomalies.length > 0 ? 'text-red-600' : 'text-gray-400'}`}>Аномалий</p>
+              <div className={`rounded-xl border p-4 text-center ${visibleAnomalies.length > 0 ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'}`}>
+                <p className={`text-2xl font-bold ${visibleAnomalies.length > 0 ? 'text-red-700' : 'text-gray-400'}`}>
+                  {visibleAnomalies.length}
+                </p>
+                <p className={`text-xs font-medium mt-1 ${visibleAnomalies.length > 0 ? 'text-red-600' : 'text-gray-400'}`}>Аномалий</p>
               </div>
-              <div className={`rounded-xl border p-4 text-center ${duplicates.length > 0 ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200'}`}>
-                <p className={`text-2xl font-bold ${duplicates.length > 0 ? 'text-orange-700' : 'text-gray-400'}`}>{duplicates.length}</p>
-                <p className={`text-xs font-medium mt-1 ${duplicates.length > 0 ? 'text-orange-600' : 'text-gray-400'}`}>Дублей</p>
+              <div className={`rounded-xl border p-4 text-center ${visibleDuplicates.length > 0 ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200'}`}>
+                <p className={`text-2xl font-bold ${visibleDuplicates.length > 0 ? 'text-orange-700' : 'text-gray-400'}`}>
+                  {visibleDuplicates.length}
+                </p>
+                <p className={`text-xs font-medium mt-1 ${visibleDuplicates.length > 0 ? 'text-orange-600' : 'text-gray-400'}`}>Дублей</p>
               </div>
-              <div className={`rounded-xl border p-4 text-center ${zombies.length > 0 ? 'bg-gray-100 border-gray-300' : 'bg-gray-50 border-gray-200'}`}>
-                <p className={`text-2xl font-bold ${zombies.length > 0 ? 'text-gray-700' : 'text-gray-400'}`}>{zombies.length}</p>
-                <p className={`text-xs font-medium mt-1 ${zombies.length > 0 ? 'text-gray-600' : 'text-gray-400'}`}>Зомби-подписок</p>
+              <div className={`rounded-xl border p-4 text-center ${visibleZombies.length > 0 ? 'bg-gray-100 border-gray-300' : 'bg-gray-50 border-gray-200'}`}>
+                <p className={`text-2xl font-bold ${visibleZombies.length > 0 ? 'text-gray-700' : 'text-gray-400'}`}>
+                  {visibleZombies.length}
+                </p>
+                <p className={`text-xs font-medium mt-1 ${visibleZombies.length > 0 ? 'text-gray-600' : 'text-gray-400'}`}>Зомби-подписок</p>
               </div>
             </div>
           )}
@@ -329,7 +419,8 @@ export default function AnomaliesPage() {
             icon={ShieldAlert}
             title="Скачки расходов"
             subtitle="Категории, где траты выросли более чем на 30% по сравнению со средним"
-            count={anomalies.length}
+            visibleCount={visibleAnomalies.length}
+            totalCount={anomalies.length}
             iconBg="bg-red-50"
             iconColor="text-red-500"
           >
@@ -340,7 +431,13 @@ export default function AnomaliesPage() {
             ) : (
               <div className="space-y-3">
                 {anomalies.map((a, i) => (
-                  <AnomalyCard key={i} item={a} symbol={symbol} />
+                  <AnomalyCard
+                    key={i}
+                    item={a}
+                    symbol={symbol}
+                    dismissed={dismissedKeys.has(anomalyKey(a))}
+                    onDismiss={() => dismiss(anomalyKey(a))}
+                  />
                 ))}
               </div>
             )}
@@ -351,7 +448,8 @@ export default function AnomaliesPage() {
             icon={Copy}
             title="Дубли платежей"
             subtitle="Одинаковые платежи, проведённые несколько раз в одном месяце"
-            count={duplicates.length}
+            visibleCount={visibleDuplicates.length}
+            totalCount={duplicates.length}
             iconBg="bg-orange-50"
             iconColor="text-orange-500"
           >
@@ -362,7 +460,13 @@ export default function AnomaliesPage() {
             ) : (
               <div className="space-y-3">
                 {duplicates.map((d, i) => (
-                  <DuplicateCard key={i} item={d} symbol={symbol} />
+                  <DuplicateCard
+                    key={i}
+                    item={d}
+                    symbol={symbol}
+                    dismissed={dismissedKeys.has(duplicateKey(d))}
+                    onDismiss={() => dismiss(duplicateKey(d))}
+                  />
                 ))}
               </div>
             )}
@@ -373,7 +477,8 @@ export default function AnomaliesPage() {
             icon={Ghost}
             title="Забытые подписки"
             subtitle="Регулярные списания с постоянной суммой — возможно, уже не нужны"
-            count={zombies.length}
+            visibleCount={visibleZombies.length}
+            totalCount={zombies.length}
             iconBg="bg-gray-100"
             iconColor="text-gray-500"
           >
@@ -384,7 +489,13 @@ export default function AnomaliesPage() {
             ) : (
               <div className="space-y-3">
                 {zombies.map((z, i) => (
-                  <ZombieCard key={i} item={z} symbol={symbol} />
+                  <ZombieCard
+                    key={i}
+                    item={z}
+                    symbol={symbol}
+                    dismissed={dismissedKeys.has(zombieKey(z))}
+                    onDismiss={() => dismiss(zombieKey(z))}
+                  />
                 ))}
               </div>
             )}

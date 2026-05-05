@@ -8,7 +8,11 @@ import { useCurrency } from '@/hooks/use-currency';
 import {
   Building2, RefreshCw, Upload, TrendingUp, TrendingDown,
   ArrowUpRight, ArrowDownRight, Target, AlertTriangle, CheckCircle2, Wifi, WifiOff,
+  Siren, ShieldAlert, ChevronRight,
 } from 'lucide-react';
+
+const CASHGAP_STORAGE_KEY = 'si_cashgap_summary';
+const ANOMALY_STORAGE_KEY = 'si_anomaly_count';
 import { toast } from 'sonner';
 
 interface Transaction {
@@ -55,10 +59,30 @@ export default function DashboardPage() {
   const [bank, setBank] = useState<BankStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [cashGapSummary, setCashGapSummary] = useState<{
+    daysUntil: number | null; obligationName?: string; ts: number;
+  } | null>(null);
+  const [anomalyCount, setAnomalyCount] = useState(0);
 
   useEffect(() => {
     if (session?.user?.id) loadAll();
   }, [session?.user?.id]);
+
+  // Read predictive summaries from localStorage (written by cashgap/anomalies pages)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(CASHGAP_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        // Only show if analysed within last 24h
+        if (Date.now() - parsed.ts < 24 * 60 * 60 * 1000) setCashGapSummary(parsed);
+      }
+    } catch { /* ok */ }
+    try {
+      const v = localStorage.getItem(ANOMALY_STORAGE_KEY);
+      if (v) setAnomalyCount(parseInt(v, 10));
+    } catch { /* ok */ }
+  }, []);
 
   const loadAll = async () => {
     setLoading(true);
@@ -256,6 +280,79 @@ export default function DashboardPage() {
           <p className="text-xs text-gray-400 mt-1">Current month</p>
         </div>
       </div>
+
+      {/* Predictive risk strip */}
+      {(cashGapSummary || anomalyCount > 0) && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* Cash Gap widget */}
+          {cashGapSummary && (
+            <Link
+              href="/dashboard/cashgap"
+              className={`flex items-center justify-between gap-3 p-4 rounded-xl border transition hover:shadow-sm ${
+                cashGapSummary.daysUntil !== null && cashGapSummary.daysUntil <= 7
+                  ? 'bg-red-50 border-red-200 hover:border-red-300'
+                  : cashGapSummary.daysUntil !== null
+                  ? 'bg-orange-50 border-orange-200 hover:border-orange-300'
+                  : 'bg-green-50 border-green-200 hover:border-green-300'
+              }`}
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
+                  cashGapSummary.daysUntil !== null && cashGapSummary.daysUntil <= 7
+                    ? 'bg-red-100'
+                    : cashGapSummary.daysUntil !== null
+                    ? 'bg-orange-100'
+                    : 'bg-green-100'
+                }`}>
+                  <Siren className={`w-4 h-4 ${
+                    cashGapSummary.daysUntil !== null && cashGapSummary.daysUntil <= 7
+                      ? 'text-red-600'
+                      : cashGapSummary.daysUntil !== null
+                      ? 'text-orange-600'
+                      : 'text-green-600'
+                  }`} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs text-gray-500 font-medium">Кассовый разрыв</p>
+                  <p className={`text-sm font-semibold truncate ${
+                    cashGapSummary.daysUntil !== null && cashGapSummary.daysUntil <= 7
+                      ? 'text-red-800'
+                      : cashGapSummary.daysUntil !== null
+                      ? 'text-orange-800'
+                      : 'text-green-800'
+                  }`}>
+                    {cashGapSummary.daysUntil !== null
+                      ? `${cashGapSummary.obligationName} через ${cashGapSummary.daysUntil} дн.`
+                      : 'Разрывов не прогнозируется'}
+                  </p>
+                </div>
+              </div>
+              <ChevronRight className="w-4 h-4 text-gray-400 shrink-0" />
+            </Link>
+          )}
+
+          {/* Anomaly widget */}
+          {anomalyCount > 0 && (
+            <Link
+              href="/dashboard/anomalies"
+              className="flex items-center justify-between gap-3 p-4 rounded-xl border bg-amber-50 border-amber-200 hover:border-amber-300 hover:shadow-sm transition"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-9 h-9 bg-amber-100 rounded-lg flex items-center justify-center shrink-0">
+                  <ShieldAlert className="w-4 h-4 text-amber-600" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs text-gray-500 font-medium">Аномалии</p>
+                  <p className="text-sm font-semibold text-amber-800">
+                    {anomalyCount} {anomalyCount === 1 ? 'проблема обнаружена' : anomalyCount < 5 ? 'проблемы обнаружено' : 'проблем обнаружено'}
+                  </p>
+                </div>
+              </div>
+              <ChevronRight className="w-4 h-4 text-gray-400 shrink-0" />
+            </Link>
+          )}
+        </div>
+      )}
 
       {/* Budget alerts + Recent transactions */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

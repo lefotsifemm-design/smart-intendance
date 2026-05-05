@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useCurrency } from '@/hooks/use-currency';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -9,12 +9,15 @@ import {
 import {
   AlertTriangle, CheckCircle2, Zap, RefreshCw,
   CalendarClock, Wallet, ArrowDownCircle, ArrowUpCircle,
-  Lightbulb, ChevronDown, ChevronUp,
+  Lightbulb, ChevronDown, ChevronUp, X, Clock,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
   CashGapResult, GapAlert, Obligation, ForecastDay,
 } from '@/app/api/cashgap/route';
+import type { AlertRecord } from '@/app/api/alerts/route';
+
+const STORAGE_KEY = 'si_cashgap_summary';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -24,6 +27,10 @@ function fmt(n: number, symbol: string) {
 
 function shortDate(d: string) {
   return new Date(d).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+}
+
+function gapAlertKey(alert: GapAlert) {
+  return `gap:${alert.date}:${alert.obligationName}`;
 }
 
 const URGENCY_STYLE = {
@@ -64,9 +71,24 @@ const OBLIGATION_TYPE_LABEL: Record<string, string> = {
 
 // ─── Alert card ───────────────────────────────────────────────────────────────
 
-function AlertCard({ alert, symbol }: { alert: GapAlert; symbol: string }) {
+function AlertCard({
+  alert,
+  symbol,
+  dismissed,
+  onDismiss,
+  onSnooze,
+}: {
+  alert: GapAlert;
+  symbol: string;
+  dismissed: boolean;
+  onDismiss: (key: string) => void;
+  onSnooze: (key: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const s = URGENCY_STYLE[alert.urgency];
+  const key = gapAlertKey(alert);
+
+  if (dismissed) return null;
 
   return (
     <div className={`rounded-xl border ${s.border} ${s.bg} overflow-hidden`}>
@@ -89,7 +111,8 @@ function AlertCard({ alert, symbol }: { alert: GapAlert; symbol: string }) {
             <p className={`font-semibold mt-1 ${s.text}`}>{alert.obligationName}</p>
             <p className="text-sm text-gray-600 mt-0.5">
               Нужно: <strong>{fmt(alert.obligationAmount, symbol)}</strong>
-              {' · '}Прогноз на счёте: <strong className={alert.projectedBalance < 0 ? 'text-red-700' : 'text-gray-800'}>
+              {' · '}Прогноз на счёте:{' '}
+              <strong className={alert.projectedBalance < 0 ? 'text-red-700' : 'text-gray-800'}>
                 {alert.projectedBalance < 0 ? '−' : ''}{fmt(alert.projectedBalance, symbol)}
               </strong>
             </p>
@@ -108,10 +131,31 @@ function AlertCard({ alert, symbol }: { alert: GapAlert; symbol: string }) {
         </div>
       </div>
 
-      {open && alert.recommendation && (
-        <div className="border-t border-current border-opacity-10 px-5 py-3 flex items-start gap-2">
-          <Lightbulb className="w-4 h-4 shrink-0 mt-0.5 text-blue-500" />
-          <p className="text-sm text-gray-700">{alert.recommendation}</p>
+      {open && (
+        <div className="border-t border-current border-opacity-10">
+          {alert.recommendation && (
+            <div className="px-5 py-3 flex items-start gap-2">
+              <Lightbulb className="w-4 h-4 shrink-0 mt-0.5 text-blue-500" />
+              <p className="text-sm text-gray-700">{alert.recommendation}</p>
+            </div>
+          )}
+          {/* Dismiss / Snooze actions */}
+          <div className="px-5 pb-4 flex items-center gap-2 mt-1" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => onSnooze(key)}
+              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 border border-gray-200 rounded-lg text-gray-600 hover:bg-white transition"
+            >
+              <Clock className="w-3.5 h-3.5" />
+              Отложить на 3 дня
+            </button>
+            <button
+              onClick={() => onDismiss(key)}
+              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 border border-gray-200 rounded-lg text-gray-500 hover:bg-white transition"
+            >
+              <X className="w-3.5 h-3.5" />
+              Скрыть
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -172,6 +216,31 @@ export default function CashGapPage() {
   const [balanceInput, setBalanceInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<CashGapResult | null>(null);
+  const [dismissedKeys, setDismissedKeys] = useState<Set<string>>(new Set());
+
+  // Load dismissed alerts on mount
+  useEffect(() => {
+    fetch('/api/alerts')
+      .then((r) => r.ok ? r.json() : [])
+      .then((records: AlertRecord[]) => {
+        const cashgapKeys = records
+          .filter((r) => r.alert_type === 'cashgap')
+          .map((r) => r.alert_key);
+        setDismissedKeys(new Set(cashgapKeys));
+      })
+      .catch(() => {/* non-critical */});
+  }, []);
+
+  const persistDismiss = useCallback(async (alertKey: string, action: 'dismiss' | 'snooze') => {
+    setDismissedKeys((prev) => new Set([...prev, alertKey]));
+    try {
+      await fetch('/api/alerts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ alertType: 'cashgap', alertKey, action }),
+      });
+    } catch {/* non-critical */}
+  }, []);
 
   const handleAnalyze = async () => {
     const balance = parseFloat(balanceInput.replace(/\s/g, '').replace(',', '.'));
@@ -181,7 +250,15 @@ export default function CashGapPage() {
     try {
       const res = await fetch(`/api/cashgap?balance=${balance}`);
       if (!res.ok) throw new Error((await res.json()).error || 'Failed');
-      setResult(await res.json());
+      const data: CashGapResult = await res.json();
+      setResult(data);
+
+      // Persist summary to localStorage for Dashboard widget
+      const firstGap = data.alerts[0];
+      const summary = firstGap
+        ? { daysUntil: firstGap.daysUntil, obligationName: firstGap.obligationName, ts: Date.now() }
+        : { daysUntil: null, ts: Date.now() };
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(summary)); } catch { /* ok */ }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Ошибка анализа');
     } finally {
@@ -195,8 +272,10 @@ export default function CashGapPage() {
   const forecast = result?.forecast ?? [];
   const collection = result?.collection;
 
-  const criticalAlert = alerts.find((a) => a.urgency === 'critical');
-  const firstGap = alerts[0];
+  const visibleAlerts = alerts.filter((a) => !dismissedKeys.has(gapAlertKey(a)));
+  const firstGap = visibleAlerts[0];
+  const criticalAlert = visibleAlerts.find((a) => a.urgency === 'critical');
+  const hiddenCount = alerts.length - visibleAlerts.length;
 
   const chartData = useMemo(
     () => forecast.map((d: ForecastDay) => ({
@@ -324,8 +403,8 @@ export default function CashGapPage() {
                 <AlertTriangle className="w-4 h-4 text-gray-400" />
                 <span className="text-sm text-gray-500">Риск-событий</span>
               </div>
-              <p className={`text-2xl font-bold ${alerts.length > 0 ? 'text-red-700' : 'text-green-700'}`}>
-                {alerts.length}
+              <p className={`text-2xl font-bold ${visibleAlerts.length > 0 ? 'text-red-700' : 'text-green-700'}`}>
+                {visibleAlerts.length}
               </p>
               <p className="text-xs text-gray-400 mt-1">в следующие 30 дней</p>
             </div>
@@ -394,11 +473,26 @@ export default function CashGapPage() {
           {alerts.length > 0 && (
             <div className="space-y-3">
               <h2 className="font-semibold text-gray-900">
-                Риск-события <span className="text-gray-400 font-normal text-sm">({alerts.length})</span>
+                Риск-события{' '}
+                <span className="text-gray-400 font-normal text-sm">
+                  ({visibleAlerts.length}{hiddenCount > 0 ? `, ещё ${hiddenCount} скрыто` : ''})
+                </span>
               </h2>
               {alerts.map((a, i) => (
-                <AlertCard key={i} alert={a} symbol={symbol} />
+                <AlertCard
+                  key={i}
+                  alert={a}
+                  symbol={symbol}
+                  dismissed={dismissedKeys.has(gapAlertKey(a))}
+                  onDismiss={(key) => persistDismiss(key, 'dismiss')}
+                  onSnooze={(key) => persistDismiss(key, 'snooze')}
+                />
               ))}
+              {hiddenCount > 0 && (
+                <p className="text-xs text-gray-400 text-center">
+                  {hiddenCount} алерт{hiddenCount > 1 ? 'а' : ''} скрыто — обновите страницу после решения проблемы
+                </p>
+              )}
             </div>
           )}
 

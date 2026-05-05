@@ -2,6 +2,10 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { createClient } from '@supabase/supabase-js';
 
+// In-memory server cache: key = userId, TTL 30min
+const _cache = new Map<string, { data: object; expires: number }>();
+const CACHE_TTL_MS = 30 * 60 * 1000;
+
 function adminClient() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -225,6 +229,11 @@ export async function GET() {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  const cached = _cache.get(session.user.id);
+  if (cached && cached.expires > Date.now()) {
+    return NextResponse.json(cached.data);
+  }
+
   const sb = adminClient();
   const twelveMonthsAgo = new Date();
   twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
@@ -239,17 +248,16 @@ export async function GET() {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   if (!transactions || transactions.length < 5) {
-    return NextResponse.json({
-      anomalies: [],
-      duplicates: [],
-      zombies: [],
-      insufficient: true,
-    });
+    const result = { anomalies: [], duplicates: [], zombies: [], insufficient: true };
+    _cache.set(session.user.id, { data: result, expires: Date.now() + CACHE_TTL_MS });
+    return NextResponse.json(result);
   }
 
   const anomalies = detectAnomalies(transactions);
   const duplicates = detectDuplicates(transactions);
   const zombies = detectZombies(transactions);
+  const result = { anomalies, duplicates, zombies, insufficient: false };
 
-  return NextResponse.json({ anomalies, duplicates, zombies, insufficient: false });
+  _cache.set(session.user.id, { data: result, expires: Date.now() + CACHE_TTL_MS });
+  return NextResponse.json(result);
 }

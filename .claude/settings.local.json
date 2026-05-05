@@ -11,7 +11,12 @@
       "mcp__Claude_in_Chrome__tabs_context_mcp",
       "mcp__scheduled-tasks__create_scheduled_task",
       "Bash(npx vitest *)",
-      "Bash(xargs ls *)"
+      "Bash(xargs ls *)",
+      "Bash(python -c \"from reportlab.lib.pagesizes import A4; print\\('reportlab ok'\\)\")",
+      "Bash(python3 -c \"from reportlab.lib.pagesizes import A4; print\\('ok'\\)\")",
+      "Bash(py -c \"from reportlab.lib.pagesizes import A4; print\\('ok'\\)\")",
+      "PowerShell(py --version)",
+      "PowerShell(py -m pip install reportlab --quiet 2>&1)"
     ]
   }
 }

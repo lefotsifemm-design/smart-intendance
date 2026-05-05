@@ -5,6 +5,10 @@ import OpenAI from 'openai';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+// In-memory server cache: key = userId:balanceBucket, TTL 1h
+const _cache = new Map<string, { data: CashGapResult; expires: number }>();
+const CACHE_TTL_MS = 60 * 60 * 1000;
+
 function adminClient() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -188,6 +192,14 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const startingBalance = parseFloat(searchParams.get('balance') ?? '0');
 
+  // Round to nearest 1000 so small input changes don't bust cache
+  const balanceBucket = Math.round(startingBalance / 1000) * 1000;
+  const cacheKey = `${session.user.id}:${balanceBucket}`;
+  const cached = _cache.get(cacheKey);
+  if (cached && cached.expires > Date.now()) {
+    return NextResponse.json(cached.data);
+  }
+
   const sb = adminClient();
   const twelveMonthsAgo = new Date();
   twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
@@ -216,6 +228,7 @@ export async function GET(request: NextRequest) {
       forecast: emptyForecast,
       insufficient: true,
     };
+    _cache.set(cacheKey, { data: result, expires: Date.now() + CACHE_TTL_MS });
     return NextResponse.json(result);
   }
 
@@ -313,6 +326,7 @@ Rules:
       insufficient: false,
     };
 
+    _cache.set(cacheKey, { data: result, expires: Date.now() + CACHE_TTL_MS });
     return NextResponse.json(result);
   } catch (err) {
     console.error('CashGap AI error:', err);
